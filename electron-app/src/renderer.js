@@ -256,3 +256,259 @@ function addEvent(type, timestamp) {
 
 // ── Init ──
 connect();
+
+// ═══════════════════════════════════════════════════════════
+//  PANEL LAYOUT ENGINE — Drag, Resize, Lock/Unlock
+// ═══════════════════════════════════════════════════════════
+
+const LAYOUT_KEY = 'openbell_panel_layout';
+const canvas = document.getElementById('layoutCanvas');
+const btnLock = document.getElementById('btnLock');
+let layoutLocked = true;
+
+// Default layout (percentages of canvas size)
+const DEFAULT_LAYOUT = {
+  camera:  { x: 1,  y: 1,  w: 64, h: 98 },
+  events:  { x: 66, y: 1,  w: 33, h: 54 },
+  history: { x: 66, y: 56, w: 33, h: 43 },
+};
+
+function getCanvasRect() {
+  return canvas.getBoundingClientRect();
+}
+
+// Convert percent layout → pixel style
+function applyLayout(layout) {
+  const rect = getCanvasRect();
+  document.querySelectorAll('.panel').forEach(panel => {
+    const id = panel.dataset.panel;
+    const pos = layout[id];
+    if (!pos) return;
+    panel.style.left   = (pos.x / 100 * rect.width)  + 'px';
+    panel.style.top    = (pos.y / 100 * rect.height) + 'px';
+    panel.style.width  = (pos.w / 100 * rect.width)  + 'px';
+    panel.style.height = (pos.h / 100 * rect.height) + 'px';
+  });
+}
+
+// Read current pixel positions → percent layout
+function readLayout() {
+  const rect = getCanvasRect();
+  const layout = {};
+  document.querySelectorAll('.panel').forEach(panel => {
+    const id = panel.dataset.panel;
+    layout[id] = {
+      x: parseFloat(panel.style.left) / rect.width  * 100,
+      y: parseFloat(panel.style.top)  / rect.height * 100,
+      w: parseFloat(panel.style.width) / rect.width  * 100,
+      h: parseFloat(panel.style.height) / rect.height * 100,
+    };
+  });
+  return layout;
+}
+
+function saveLayout() {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(readLayout()));
+  } catch (e) { /* ignore */ }
+}
+
+function loadLayout() {
+  try {
+    const saved = localStorage.getItem(LAYOUT_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+function resetLayout() {
+  localStorage.removeItem(LAYOUT_KEY);
+  applyLayout(DEFAULT_LAYOUT);
+}
+
+// ── Lock / Unlock Toggle ──
+function toggleLayoutLock() {
+  layoutLocked = !layoutLocked;
+  canvas.classList.toggle('unlocked', !layoutLocked);
+  btnLock.classList.toggle('unlocked', !layoutLocked);
+  btnLock.textContent = layoutLocked ? '🔒 Locked' : '🔓 Edit Layout';
+  if (layoutLocked) {
+    saveLayout();
+  }
+}
+// Make globally accessible for onclick
+window.toggleLayoutLock = toggleLayoutLock;
+
+// ── Drag Logic ──
+let dragPanel = null, dragStartX = 0, dragStartY = 0, dragOrigLeft = 0, dragOrigTop = 0;
+
+function onDragStart(e) {
+  if (layoutLocked) return;
+  // Only start drag from handle
+  const handle = e.target.closest('.panel-drag-handle');
+  if (!handle) return;
+  const panel = handle.closest('.panel');
+  if (!panel) return;
+
+  e.preventDefault();
+  dragPanel = panel;
+  dragPanel.classList.add('dragging');
+
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  dragStartX = clientX;
+  dragStartY = clientY;
+  dragOrigLeft = parseFloat(panel.style.left) || 0;
+  dragOrigTop  = parseFloat(panel.style.top)  || 0;
+
+  document.addEventListener('mousemove', onDragMove, { passive: false });
+  document.addEventListener('mouseup', onDragEnd);
+  document.addEventListener('touchmove', onDragMove, { passive: false });
+  document.addEventListener('touchend', onDragEnd);
+}
+
+function onDragMove(e) {
+  if (!dragPanel) return;
+  e.preventDefault();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const dx = clientX - dragStartX;
+  const dy = clientY - dragStartY;
+
+  const rect = getCanvasRect();
+  let newLeft = dragOrigLeft + dx;
+  let newTop  = dragOrigTop  + dy;
+
+  // Clamp to canvas bounds
+  const pw = parseFloat(dragPanel.style.width) || 100;
+  const ph = parseFloat(dragPanel.style.height) || 100;
+  newLeft = Math.max(0, Math.min(newLeft, rect.width - pw));
+  newTop  = Math.max(0, Math.min(newTop, rect.height - ph));
+
+  dragPanel.style.left = newLeft + 'px';
+  dragPanel.style.top  = newTop  + 'px';
+}
+
+function onDragEnd() {
+  if (dragPanel) {
+    dragPanel.classList.remove('dragging');
+    dragPanel = null;
+  }
+  document.removeEventListener('mousemove', onDragMove);
+  document.removeEventListener('mouseup', onDragEnd);
+  document.removeEventListener('touchmove', onDragMove);
+  document.removeEventListener('touchend', onDragEnd);
+}
+
+// ── Resize Logic ──
+let resizePanel = null, resizeStartX = 0, resizeStartY = 0, resizeOrigW = 0, resizeOrigH = 0;
+
+function onResizeStart(e) {
+  if (layoutLocked) return;
+  const handle = e.target.closest('.panel-resize-handle');
+  if (!handle) return;
+  const panel = handle.closest('.panel');
+  if (!panel) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+  resizePanel = panel;
+  resizePanel.classList.add('resizing');
+
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  resizeStartX = clientX;
+  resizeStartY = clientY;
+  resizeOrigW = parseFloat(panel.style.width)  || 200;
+  resizeOrigH = parseFloat(panel.style.height) || 200;
+
+  document.addEventListener('mousemove', onResizeMove, { passive: false });
+  document.addEventListener('mouseup', onResizeEnd);
+  document.addEventListener('touchmove', onResizeMove, { passive: false });
+  document.addEventListener('touchend', onResizeEnd);
+}
+
+function onResizeMove(e) {
+  if (!resizePanel) return;
+  e.preventDefault();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const dx = clientX - resizeStartX;
+  const dy = clientY - resizeStartY;
+
+  const rect = getCanvasRect();
+  const left = parseFloat(resizePanel.style.left) || 0;
+  const top  = parseFloat(resizePanel.style.top)  || 0;
+
+  // Min sizes
+  let newW = Math.max(150, resizeOrigW + dx);
+  let newH = Math.max(100, resizeOrigH + dy);
+
+  // Clamp to canvas bounds
+  newW = Math.min(newW, rect.width - left);
+  newH = Math.min(newH, rect.height - top);
+
+  resizePanel.style.width  = newW + 'px';
+  resizePanel.style.height = newH + 'px';
+}
+
+function onResizeEnd() {
+  if (resizePanel) {
+    resizePanel.classList.remove('resizing');
+    resizePanel = null;
+  }
+  document.removeEventListener('mousemove', onResizeMove);
+  document.removeEventListener('mouseup', onResizeEnd);
+  document.removeEventListener('touchmove', onResizeMove);
+  document.removeEventListener('touchend', onResizeEnd);
+}
+
+// ── Event Listeners ──
+canvas.addEventListener('mousedown', (e) => {
+  if (e.target.closest('.panel-resize-handle')) {
+    onResizeStart(e);
+  } else {
+    onDragStart(e);
+  }
+});
+canvas.addEventListener('touchstart', (e) => {
+  if (e.target.closest('.panel-resize-handle')) {
+    onResizeStart(e);
+  } else {
+    onDragStart(e);
+  }
+}, { passive: false });
+
+// ── Reflow on window resize (maintain percentages) ──
+let reflowTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(reflowTimer);
+  reflowTimer = setTimeout(() => {
+    const layout = loadLayout() || DEFAULT_LAYOUT;
+    applyLayout(layout);
+  }, 100);
+});
+
+// ── Double-click drag handle → reset that panel to defaults ──
+canvas.addEventListener('dblclick', (e) => {
+  if (layoutLocked) return;
+  const handle = e.target.closest('.panel-drag-handle');
+  if (!handle) return;
+  const panel = handle.closest('.panel');
+  if (!panel) return;
+  const id = panel.dataset.panel;
+  const rect = getCanvasRect();
+  const def = DEFAULT_LAYOUT[id];
+  if (def) {
+    panel.style.left   = (def.x / 100 * rect.width)  + 'px';
+    panel.style.top    = (def.y / 100 * rect.height) + 'px';
+    panel.style.width  = (def.w / 100 * rect.width)  + 'px';
+    panel.style.height = (def.h / 100 * rect.height) + 'px';
+  }
+});
+
+// ── Apply saved or default layout on load ──
+(function initLayout() {
+  const saved = loadLayout();
+  applyLayout(saved || DEFAULT_LAYOUT);
+})();

@@ -9,9 +9,12 @@
 <body>
   <div class="header">
     <h1>⟫ OpenBell</h1>
-    <div class="status">
-      <span class="status-dot" id="statusDot"></span>
-      <span id="statusText">Connecting...</span>
+    <div class="header-right">
+      <button class="btn btn-lock" id="btnLock" onclick="toggleLayoutLock()">🔒 Locked</button>
+      <div class="status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Connecting...</span>
+      </div>
     </div>
   </div>
 
@@ -23,10 +26,10 @@
     </div>
   </div>
 
-  <div class="grid">
-    <div>
-      <div class="card">
-        <h2>// Camera</h2>
+  <div class="canvas" id="layoutCanvas">
+    <div class="panel" id="panel-camera" data-panel="camera">
+      <div class="panel-drag-handle">// Camera <span class="panel-hint">(drag to move)</span></div>
+      <div class="panel-content">
         <div class="video-container" id="videoContainer">
           <div class="no-feed" id="noFeed">[ awaiting feed ]</div>
           <img id="videoFeed" style="display:none" alt="Camera Feed">
@@ -46,16 +49,23 @@
           <span class="intercom-hint" id="intercomHint">push-to-talk intercom</span>
         </div>
       </div>
+      <div class="panel-resize-handle"></div>
     </div>
-    <div class="sidebar">
-      <div class="card">
-        <h2>// Events</h2>
+
+    <div class="panel" id="panel-events" data-panel="events">
+      <div class="panel-drag-handle">// Events <span class="panel-hint">(drag to move)</span></div>
+      <div class="panel-content">
         <div id="eventList" class="event-list"></div>
       </div>
-      <div class="card">
-        <h2>// Call History</h2>
+      <div class="panel-resize-handle"></div>
+    </div>
+
+    <div class="panel" id="panel-history" data-panel="history">
+      <div class="panel-drag-handle">// Call History <span class="panel-hint">(drag to move)</span></div>
+      <div class="panel-content">
         <div id="callHistory" class="call-history"></div>
       </div>
+      <div class="panel-resize-handle"></div>
     </div>
   </div>
 
