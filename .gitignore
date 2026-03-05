@@ -1,0 +1,41 @@
+# Rust
+rust-server/target/
+
+# Android
+android-app/.gradle/
+android-app/build/
+android-app/app/build/
+android-app/local.properties
+*.apk
+*.aab
+*.keystore
+
+# Node / Electron
+electron-app/node_modules/
+electron-app/dist/
+electron-app/out/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# YOLOv8 model (large binary)
+*.pt
+
+# Recordings and snapshots (user data)
+recordings/
+snapshots/
+tts_cache/
+
+# Faces directory (personal photos)
+faces/
+*.log

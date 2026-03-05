@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background_dark">
+
+    <!-- Call status text -->
+    <TextView
+        android:id="@+id/tvCallStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="[ ringing ]"
+        android:textSize="28sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/accent_green"
+        android:textStyle="bold"
+        android:shadowColor="#6600FF41"
+        android:shadowDx="0"
+        android:shadowDy="0"
+        android:shadowRadius="12"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/tvCallTimer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintVertical_chainStyle="packed"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Call duration timer -->
+    <TextView
+        android:id="@+id/tvCallTimer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="00:00"
+        android:textSize="20sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/text_tertiary"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/tvCallStatus"
+        app:layout_constraintBottom_toTopOf="@id/tvCallHint"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Hint text -->
+    <TextView
+        android:id="@+id/tvCallHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="14sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/text_secondary"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/tvCallTimer"
+        app:layout_constraintBottom_toTopOf="@id/tvAiMessage"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="16dp" />
+
+    <!-- AI greeting message -->
+    <TextView
+        android:id="@+id/tvAiMessage"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/text_secondary"
+        android:padding="24dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/tvCallHint"
+        app:layout_constraintBottom_toTopOf="@id/callControls"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Recording indicator -->
+    <TextView
+        android:id="@+id/tvRecording"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="● REC"
+        android:textColor="@color/indicator_red"
+        android:fontFamily="monospace"
+        android:textSize="13sp"
+        android:padding="12dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Call controls -->
+    <LinearLayout
+        android:id="@+id/callControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:padding="32dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnEndCall"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:text="✕"
+            android:textSize="28sp"
+            android:textColor="@color/call_red"
+            android:fontFamily="monospace"
+            app:cornerRadius="36dp"
+            app:backgroundTint="@color/surface_dark"
+            app:strokeColor="@color/call_red"
+            app:strokeWidth="2dp"
+            app:iconTint="@color/call_red" />
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

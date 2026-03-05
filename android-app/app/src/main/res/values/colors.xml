@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Neo-Retro Phosphor Green Terminal Palette -->
+    <color name="background_dark">#FF050505</color>
+    <color name="surface_dark">#FF0a120a</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="text_primary">#FF00FF41</color>
+    <color name="text_secondary">#FF0a8f2a</color>
+    <color name="text_tertiary">#FF064d16</color>
+    <color name="accent_green">#FF00FF41</color>
+    <color name="accent_blue">#FF00FF41</color>
+    <color name="border">#FF0d2b0d</color>
+    <color name="border_hi">#FF1a4d1a</color>
+
+    <!-- Indicator lights -->
+    <color name="indicator_green">#FF00FF41</color>
+    <color name="indicator_orange">#FFFF8800</color>
+    <color name="indicator_red">#FFFF2200</color>
+
+    <!-- Doorbell button -->
+    <color name="doorbell_button">#FF0a120a</color>
+    <color name="doorbell_button_stroke">#FF00FF41</color>
+    <color name="doorbell_ripple">#4000FF41</color>
+
+    <!-- Call screen -->
+    <color name="call_red">#FFFF2200</color>
+    <color name="call_green">#FF00FF41</color>
+
+    <color name="ic_launcher_background">#FF050505</color>
+</resources>

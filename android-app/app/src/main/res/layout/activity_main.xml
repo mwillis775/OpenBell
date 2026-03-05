@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background_dark"
+    android:fitsSystemWindows="false"
+    tools:context=".ui.MainActivity">
+
+    <!-- Title -->
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="OPENBELL"
+        android:textSize="16sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/accent_green"
+        android:letterSpacing="0.15"
+        android:shadowColor="#6600FF41"
+        android:shadowDx="0"
+        android:shadowDy="0"
+        android:shadowRadius="8"
+        android:layout_marginStart="20dp"
+        android:layout_marginTop="20dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Close button -->
+    <TextView
+        android:id="@+id/btnClose"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="[ exit ]"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/text_tertiary"
+        android:padding="4dp"
+        android:layout_marginStart="20dp"
+        android:layout_marginTop="2dp"
+        android:clickable="true"
+        android:focusable="true"
+        app:layout_constraintTop_toBottomOf="@id/tvTitle"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Status Indicator Light -->
+    <View
+        android:id="@+id/statusIndicator"
+        android:layout_width="12dp"
+        android:layout_height="12dp"
+        android:background="@drawable/indicator_dot"
+        android:layout_marginTop="24dp"
+        android:layout_marginEnd="20dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Clock -->
+    <TextView
+        android:id="@+id/tvTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="52sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/accent_green"
+        android:shadowColor="#6600FF41"
+        android:shadowDx="0"
+        android:shadowDy="0"
+        android:shadowRadius="14"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/btnDoorbell"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        tools:text="14:30" />
+
+    <!-- Big Doorbell Button -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnDoorbell"
+        android:layout_width="220dp"
+        android:layout_height="220dp"
+        android:gravity="center"
+        app:icon="@drawable/ic_doorbell"
+        app:iconSize="96dp"
+        app:iconGravity="textStart"
+        app:iconPadding="0dp"
+        app:cornerRadius="110dp"
+        app:backgroundTint="@color/doorbell_button"
+        app:strokeColor="@color/doorbell_button_stroke"
+        app:strokeWidth="3dp"
+        app:rippleColor="@color/doorbell_ripple"
+        app:iconTint="@null"
+        app:layout_constraintTop_toBottomOf="@id/tvTime"
+        app:layout_constraintBottom_toTopOf="@id/tvHint"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <TextView
+        android:id="@+id/tvHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="[ press to ring ]"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:textColor="@color/text_tertiary"
+        android:layout_marginBottom="32dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

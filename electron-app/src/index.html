@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenBell</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="header">
+    <h1>⟫ OpenBell</h1>
+    <div class="status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </div>
+
+  <div id="callBanner" class="call-banner">
+    <span id="callBannerText">▶ DOORBELL RINGING ◀</span>
+    <div class="actions" id="callActions">
+      <button class="btn btn-answer" onclick="answerCall()">Answer</button>
+      <button class="btn btn-ignore" onclick="endCall()">Ignore</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>// Camera</h2>
+        <div class="video-container" id="videoContainer">
+          <div class="no-feed" id="noFeed">[ awaiting feed ]</div>
+          <img id="videoFeed" style="display:none" alt="Camera Feed">
+        </div>
+        <div class="intercom-bar">
+          <button class="btn btn-phone-audio" id="btnPhoneAudio" onclick="togglePhoneAudio()">
+            ▶ Audio On
+          </button>
+          <span class="phone-audio-label" id="phoneAudioLabel">Phone mic → PC speakers</span>
+        </div>
+        <div class="intercom-bar">
+          <button class="btn btn-intercom" id="btnIntercom"
+                  onmousedown="intercomDown()" onmouseup="intercomUp()"
+                  ontouchstart="intercomDown()" ontouchend="intercomUp()">
+            ◉ Hold to Talk
+          </button>
+          <span class="intercom-hint" id="intercomHint">push-to-talk intercom</span>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar">
+      <div class="card">
+        <h2>// Events</h2>
+        <div id="eventList" class="event-list"></div>
+      </div>
+      <div class="card">
+        <h2>// Call History</h2>
+        <div id="callHistory" class="call-history"></div>
+      </div>
+    </div>
+  </div>
+
+  <audio id="ringSound" loop preload="auto">
+    <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" type="audio/wav">
+  </audio>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

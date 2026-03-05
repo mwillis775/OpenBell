@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/background_dark">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/surface_dark"
+        app:titleTextColor="@color/accent_green" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="24dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="// Server URL"
+                android:textColor="@color/text_secondary"
+                android:fontFamily="monospace"
+                android:textSize="13sp" />
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etServerUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="http://192.168.1.100:5000"
+                android:textColor="@color/accent_green"
+                android:textColorHint="@color/text_tertiary"
+                android:fontFamily="monospace"
+                android:inputType="textUri"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="16dp"
+                android:background="@color/surface_dark"
+                android:padding="12dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="// Device Name"
+                android:textColor="@color/text_secondary"
+                android:fontFamily="monospace"
+                android:textSize="13sp" />
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etDeviceName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Front Door"
+                android:textColor="@color/accent_green"
+                android:textColorHint="@color/text_tertiary"
+                android:fontFamily="monospace"
+                android:inputType="text"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="16dp"
+                android:background="@color/surface_dark"
+                android:padding="12dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="// Stream Port"
+                android:textColor="@color/text_secondary"
+                android:fontFamily="monospace"
+                android:textSize="13sp" />
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etStreamPort"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="8080"
+                android:textColor="@color/accent_green"
+                android:textColorHint="@color/text_tertiary"
+                android:fontFamily="monospace"
+                android:inputType="number"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="16dp"
+                android:background="@color/surface_dark"
+                android:padding="12dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="// Call Timeout (seconds)"
+                android:textColor="@color/text_secondary"
+                android:fontFamily="monospace"
+                android:textSize="13sp" />
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etCallTimeout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="30"
+                android:textColor="@color/accent_green"
+                android:textColorHint="@color/text_tertiary"
+                android:fontFamily="monospace"
+                android:inputType="number"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="24dp"
+                android:background="@color/surface_dark"
+                android:padding="12dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSave"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="[ save ]"
+                android:fontFamily="monospace"
+                android:textColor="@color/accent_green"
+                app:backgroundTint="@color/surface_dark"
+                app:strokeColor="@color/accent_green"
+                app:strokeWidth="1dp" />
+
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>
