@@ -97,6 +97,40 @@ async fn handle_socket(socket: WebSocket, ws: Arc<WsState>, addr: SocketAddr) {
         .send(Message::Text(serde_json::to_string(&status).unwrap().into()))
         .await;
 
+    // Auto-register fallback: if a non-localhost client connects and doesn't
+    // send a Register message within 5 seconds, assume it's the doorbell phone
+    // and register it automatically (stream on port 8080).
+    if !addr.ip().is_loopback() {
+        let auto_ws = ws.clone();
+        let auto_ip = addr.ip().to_string();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let already = auto_ws.app.devices.read().contains_key(&auto_ip);
+            if !already {
+                let stream = format!("http://{}:8080/video", auto_ip);
+                info!("Auto-registering unregistered phone {} (fallback)", auto_ip);
+                let dev = crate::state::DeviceInfo {
+                    device_ip: auto_ip.clone(),
+                    stream_url: Some(stream.clone()),
+                    capabilities: vec!["camera".into(), "doorbell_button".into(), "audio_playback".into()],
+                    device_type: "doorbell".into(),
+                    device_name: "Front Door".into(),
+                    registered_at: AppState::now_secs(),
+                    last_seen: AppState::now_secs(),
+                };
+                auto_ws.app.devices.write().insert(auto_ip.clone(), dev);
+                *auto_ws.app.phone_ip.write() = Some(auto_ip);
+                *auto_ws.app.stream_url.write() = Some(stream);
+                let _ = auto_ws.app.broadcast_tx.send(ServerMessage::Status {
+                    call_state: auto_ws.app.call_state.read().to_string(),
+                    devices: serde_json::to_value(&*auto_ws.app.devices.read()).unwrap_or_default(),
+                    stream_url: auto_ws.app.stream_url.read().clone(),
+                    phone_audio_muted: auto_ws.app.phone_audio_muted.load(Ordering::Relaxed),
+                });
+            }
+        });
+    }
+
     // Spawn task for broadcast → client
     let mut send_task = tokio::spawn(async move {
         while let Ok(msg) = broadcast_rx.recv().await {

@@ -28,6 +28,10 @@ object ServerRegistration {
     @Volatile private var connected = false
     private var serverUrl: String? = null
 
+    /** Stored registration info so we can re-register on every reconnect */
+    @Volatile private var registeredIp: String? = null
+    @Volatile private var registeredPort: Int = 8080
+
     /** Thread-safe listeners for incoming server messages */
     private val listeners = CopyOnWriteArrayList<(JsonObject) -> Unit>()
 
@@ -50,6 +54,12 @@ object ServerRegistration {
             override fun onOpen(ws: WebSocket, response: Response) {
                 Log.i(TAG, "WebSocket connected")
                 connected = true
+                // Auto-register on every connect/reconnect
+                val ip = registeredIp
+                if (ip != null) {
+                    Log.i(TAG, "Auto-registering on reconnect: $ip:$registeredPort")
+                    register(ip, registeredPort)
+                }
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
@@ -92,7 +102,11 @@ object ServerRegistration {
                 return@Thread
             }
             Log.i(TAG, "Attempting WebSocket reconnect...")
-            synchronized(this@ServerRegistration) { webSocket = null }
+            synchronized(this@ServerRegistration) {
+                // Close stale socket before creating a new one
+                try { webSocket?.cancel() } catch (_: Exception) {}
+                webSocket = null
+            }
             connect(url)
         }.start()
     }
@@ -128,6 +142,9 @@ object ServerRegistration {
 
     /** Register this device with the server */
     fun register(deviceIp: String, streamPort: Int = 8080) {
+        // Store for auto-register on reconnect
+        registeredIp = deviceIp
+        registeredPort = streamPort
         send(mapOf(
             "type" to "register",
             "device_ip" to deviceIp,
