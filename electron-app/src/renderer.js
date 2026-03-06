@@ -92,6 +92,12 @@ function handleMessage(msg) {
     case 'phone_audio_mute':
       updatePhoneAudioMute(msg.muted);
       break;
+    case 'person_detected':
+      onPersonDetected(msg);
+      break;
+    case 'person_left':
+      onPersonLeft(msg);
+      break;
     default:
       console.log('Unknown message:', msg);
   }
@@ -153,6 +159,25 @@ function onDoorbellPress(timestamp) {
   } else if (Notification.permission !== 'denied') {
     Notification.requestPermission();
   }
+}
+
+function onPersonDetected(msg) {
+  addEvent('person_detected', msg.timestamp);
+  console.log(
+    `CV: Person detected — ${msg.person_count} person(s), ` +
+    `conf=${msg.max_confidence?.toFixed(2)}, snapshot=${msg.snapshot_file}`
+  );
+  // Show a notification if not already in a call
+  if (callState === 'idle' && Notification.permission === 'granted') {
+    new Notification('OpenBell — Person Detected', {
+      body: `${msg.person_count} person(s) spotted at the door`,
+    });
+  }
+}
+
+function onPersonLeft(msg) {
+  addEvent('person_left', msg.timestamp);
+  console.log('CV: Person left frame');
 }
 
 // ── Actions ──

@@ -11,6 +11,7 @@ G='\033[0;32m' R='\033[0;31m' Y='\033[0;33m' N='\033[0m'
 cleanup() {
   echo -e "\n${Y}Shutting down OpenBell...${N}"
   kill "$SERVER_PID" 2>/dev/null && echo "  Server stopped" || true
+  kill "$CV_PID" 2>/dev/null && echo "  CV server stopped" || true
   kill "$ELECTRON_PID" 2>/dev/null && echo "  Dashboard stopped" || true
   # Clean up audio pipelines spawned by the server
   pkill -f "pw-cat.*doorbell" 2>/dev/null || true
@@ -20,6 +21,7 @@ trap cleanup EXIT INT TERM
 
 # ── Kill any leftovers ──
 pkill -f doorbell-server 2>/dev/null || true
+pkill -f "python.*cv-server" 2>/dev/null || true
 fuser -k -n tcp 5000 2>/dev/null || true
 fuser -k -n udp 5002 2>/dev/null || true
 fuser -k -n udp 5003 2>/dev/null || true
@@ -51,7 +53,19 @@ npm start 2>&1 &
 ELECTRON_PID=$!
 echo -e "${G}  Dashboard launched${N}"
 
+# ── Start CV server (YOLOv8 person detection) ──
+echo -e "${Y}Starting CV server...${N}"
+cd "$DIR/cv-server"
+if [[ ! -d "venv" ]]; then
+  echo -e "${Y}  Creating Python venv...${N}"
+  python3 -m venv venv
+  venv/bin/pip install -q -r requirements.txt
+fi
+venv/bin/python main.py 2>&1 &
+CV_PID=$!
+echo -e "${G}  CV server launched (PID $CV_PID)${N}"
+
 echo -e "\n${G}OpenBell is running. Press Ctrl+C to stop.${N}\n"
 
-# Keep alive — wait for either process to exit
-wait -n "$SERVER_PID" "$ELECTRON_PID" 2>/dev/null || true
+# Keep alive — wait for any process to exit
+wait -n "$SERVER_PID" "$CV_PID" "$ELECTRON_PID" 2>/dev/null || true

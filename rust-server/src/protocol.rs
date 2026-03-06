@@ -29,6 +29,15 @@ pub enum ClientMessage {
     IntercomStop,
     /// Dashboard: mute/unmute phone→PC audio
     TogglePhoneAudio { muted: bool },
+    /// CV server: person detection event
+    CvDetection {
+        event_type: String,
+        timestamp: f64,
+        person_count: u32,
+        max_confidence: f64,
+        snapshot_file: Option<String>,
+        detections: Vec<serde_json::Value>,
+    },
 }
 
 // ── Messages from server to clients ──
@@ -66,6 +75,15 @@ pub enum ServerMessage {
     PhoneAudioMute { muted: bool },
     /// Error
     Error { message: String },
+    /// Person detected by CV
+    PersonDetected {
+        timestamp: f64,
+        person_count: u32,
+        max_confidence: f64,
+        snapshot_file: Option<String>,
+    },
+    /// Person left (no longer in frame)
+    PersonLeft { timestamp: f64 },
 }
 
 // ── Call states ──

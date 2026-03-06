@@ -7,7 +7,7 @@ use axum::{
         ConnectInfo, State, WebSocketUpgrade,
     },
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures::{SinkExt, StreamExt};
@@ -31,6 +31,7 @@ pub fn build_router(state: Arc<AppState>, audio_mgr: Arc<AudioManager>) -> Route
         .route("/ws", get(ws_handler))
         .route("/api/status", get(api_status))
         .route("/api/call/status", get(api_call_status))
+        .route("/api/cv/event", post(cv_event))
         .with_state(shared)
         .layer(CorsLayer::permissive())
 }
@@ -293,6 +294,74 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
             info!("Phone audio mute={} from {}", muted, addr);
             state.phone_audio_muted.store(muted, Ordering::Relaxed);
             let _ = state.broadcast_tx.send(ServerMessage::PhoneAudioMute { muted });
+        }
+
+        ClientMessage::CvDetection {
+            event_type,
+            timestamp,
+            person_count,
+            max_confidence,
+            snapshot_file,
+            ..
+        } => {
+            handle_cv_event(state, &event_type, timestamp, person_count, max_confidence, snapshot_file);
+        }
+    }
+}
+
+// ── CV event HTTP endpoint ──
+
+/// POST /api/cv/event — receives detection events from the Python CV sidecar
+async fn cv_event(
+    State(ws): State<Arc<WsState>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let event_type = payload["event_type"].as_str().unwrap_or("unknown");
+    let timestamp = payload["timestamp"].as_f64().unwrap_or_else(AppState::now_secs);
+    let person_count = payload["person_count"].as_u64().unwrap_or(0) as u32;
+    let max_confidence = payload["max_confidence"].as_f64().unwrap_or(0.0);
+    let snapshot_file = payload["snapshot_file"].as_str().map(String::from);
+
+    handle_cv_event(
+        &ws.app,
+        event_type,
+        timestamp,
+        person_count,
+        max_confidence,
+        snapshot_file,
+    );
+
+    Json(serde_json::json!({ "status": "ok" }))
+}
+
+/// Shared logic for CV events (from both WS and HTTP)
+fn handle_cv_event(
+    state: &AppState,
+    event_type: &str,
+    timestamp: f64,
+    person_count: u32,
+    max_confidence: f64,
+    snapshot_file: Option<String>,
+) {
+    match event_type {
+        "person_detected" => {
+            info!(
+                "CV: Person detected — {} person(s), conf={:.2}, snapshot={:?}",
+                person_count, max_confidence, snapshot_file
+            );
+            let _ = state.broadcast_tx.send(ServerMessage::PersonDetected {
+                timestamp,
+                person_count,
+                max_confidence,
+                snapshot_file,
+            });
+        }
+        "person_left" => {
+            info!("CV: Person left frame");
+            let _ = state.broadcast_tx.send(ServerMessage::PersonLeft { timestamp });
+        }
+        other => {
+            warn!("CV: Unknown event type: {}", other);
         }
     }
 }
