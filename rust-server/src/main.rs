@@ -10,6 +10,7 @@ High-performance local-network doorbell backend:
 
 mod audio;
 mod discovery;
+mod dsp;
 mod protocol;
 mod relay;
 mod state;

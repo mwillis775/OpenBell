@@ -33,6 +33,8 @@ pub fn build_router(state: Arc<AppState>, audio_mgr: Arc<AudioManager>) -> Route
         .route("/api/status", get(api_status))
         .route("/api/call/status", get(api_call_status))
         .route("/api/cv/event", post(cv_event))
+        .route("/api/cv/status", get(cv_status))
+        .route("/api/cv/toggle", post(cv_toggle))
         .with_state(shared)
         .layer(CorsLayer::permissive())
 }
@@ -57,6 +59,7 @@ async fn api_status(State(ws): State<Arc<WsState>>) -> Json<serde_json::Value> {
         "devices": devices,
         "stream_url": stream_url,
         "phone_audio_muted": state.phone_audio_muted.load(Ordering::Relaxed),
+        "cv_enabled": state.cv_enabled.load(Ordering::Relaxed),
     }))
 }
 
@@ -69,6 +72,24 @@ async fn api_call_status(State(ws): State<Arc<WsState>>) -> Json<serde_json::Val
         "state": call_state,
         "call_id": call_id,
     }))
+}
+
+/// GET /api/cv/status — returns whether CV detection is enabled
+async fn cv_status(State(ws): State<Arc<WsState>>) -> Json<serde_json::Value> {
+    let enabled = ws.app.cv_enabled.load(Ordering::Relaxed);
+    Json(serde_json::json!({ "enabled": enabled }))
+}
+
+/// POST /api/cv/toggle — toggle CV detection on/off
+async fn cv_toggle(
+    State(ws): State<Arc<WsState>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let enabled = payload["enabled"].as_bool().unwrap_or(true);
+    ws.app.cv_enabled.store(enabled, Ordering::Relaxed);
+    info!("CV detection toggled: enabled={}", enabled);
+    let _ = ws.app.broadcast_tx.send(ServerMessage::CvState { enabled });
+    Json(serde_json::json!({ "status": "ok", "enabled": enabled }))
 }
 
 // ── WebSocket handler ──
@@ -94,6 +115,7 @@ async fn handle_socket(socket: WebSocket, ws: Arc<WsState>, addr: SocketAddr) {
         devices: serde_json::to_value(&*ws.app.devices.read()).unwrap_or_default(),
         stream_url: ws.app.stream_url.read().clone(),
         phone_audio_muted: ws.app.phone_audio_muted.load(Ordering::Relaxed),
+        cv_enabled: ws.app.cv_enabled.load(Ordering::Relaxed),
     };
     let _ = sender
         .send(Message::Text(serde_json::to_string(&status).unwrap().into()))
@@ -128,6 +150,7 @@ async fn handle_socket(socket: WebSocket, ws: Arc<WsState>, addr: SocketAddr) {
                     devices: serde_json::to_value(&*auto_ws.app.devices.read()).unwrap_or_default(),
                     stream_url: auto_ws.app.stream_url.read().clone(),
                     phone_audio_muted: auto_ws.app.phone_audio_muted.load(Ordering::Relaxed),
+                    cv_enabled: auto_ws.app.cv_enabled.load(Ordering::Relaxed),
                 });
             }
         });
@@ -211,6 +234,7 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
                 devices: serde_json::to_value(&*state.devices.read()).unwrap_or_default(),
                 stream_url: state.stream_url.read().clone(),
                 phone_audio_muted: state.phone_audio_muted.load(Ordering::Relaxed),
+                cv_enabled: state.cv_enabled.load(Ordering::Relaxed),
             });
         }
 
@@ -307,6 +331,12 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
             info!("Phone audio mute={} from {}", muted, addr);
             state.phone_audio_muted.store(muted, Ordering::Relaxed);
             let _ = state.broadcast_tx.send(ServerMessage::PhoneAudioMute { muted });
+        }
+
+        ClientMessage::ToggleCv { enabled } => {
+            info!("CV detection enabled={} from {}", enabled, addr);
+            state.cv_enabled.store(enabled, Ordering::Relaxed);
+            let _ = state.broadcast_tx.send(ServerMessage::CvState { enabled });
         }
 
         ClientMessage::CvDetection {

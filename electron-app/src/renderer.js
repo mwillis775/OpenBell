@@ -8,6 +8,7 @@ let reconnectTimer = null;
 let streamUrl = null;
 let intercomActive = false;
 let phoneAudioMuted = false;
+let cvEnabled = true;
 
 // ── DOM refs ──
 const statusDot = document.getElementById('statusDot');
@@ -24,6 +25,8 @@ const btnIntercom = document.getElementById('btnIntercom');
 const intercomHint = document.getElementById('intercomHint');
 const btnPhoneAudio = document.getElementById('btnPhoneAudio');
 const phoneAudioLabel = document.getElementById('phoneAudioLabel');
+const btnCv = document.getElementById('btnCv');
+const cvLabel = document.getElementById('cvLabel');
 
 // ── WebSocket Connection ──
 function connect() {
@@ -92,6 +95,9 @@ function handleMessage(msg) {
     case 'phone_audio_mute':
       updatePhoneAudioMute(msg.muted);
       break;
+    case 'cv_state':
+      updateCvState(msg.enabled);
+      break;
     case 'person_detected':
       onPersonDetected(msg);
       break;
@@ -119,6 +125,9 @@ function updateStatus(msg) {
   }
   if (msg.phone_audio_muted !== undefined) {
     updatePhoneAudioMute(msg.phone_audio_muted);
+  }
+  if (msg.cv_enabled !== undefined) {
+    updateCvState(msg.cv_enabled);
   }
 }
 
@@ -238,6 +247,27 @@ function updateIntercomState(active) {
 function togglePhoneAudio() {
   const newMuted = !phoneAudioMuted;
   send({ type: 'toggle_phone_audio', muted: newMuted });
+}
+
+function toggleCv() {
+  const newEnabled = !cvEnabled;
+  send({ type: 'toggle_cv', enabled: newEnabled });
+}
+
+function updateCvState(enabled) {
+  cvEnabled = enabled;
+  if (btnCv) {
+    if (enabled) {
+      btnCv.classList.remove('disabled');
+      btnCv.textContent = '◉ CV On';
+    } else {
+      btnCv.classList.add('disabled');
+      btnCv.textContent = '▪ CV Off';
+    }
+  }
+  if (cvLabel) {
+    cvLabel.textContent = enabled ? 'person detection active' : 'person detection paused';
+  }
 }
 
 function updatePhoneAudioMute(muted) {

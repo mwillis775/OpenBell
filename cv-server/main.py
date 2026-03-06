@@ -15,6 +15,7 @@ Usage:
 import logging
 import signal
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -37,6 +38,8 @@ log = logging.getLogger("openbell.cv")
 
 # ── Graceful shutdown ──
 _running = True
+_cv_enabled = True        # toggled via Rust server API
+_cv_lock = threading.Lock()
 
 
 def _shutdown(sig, _frame):
@@ -47,6 +50,24 @@ def _shutdown(sig, _frame):
 
 signal.signal(signal.SIGINT, _shutdown)
 signal.signal(signal.SIGTERM, _shutdown)
+
+
+def _poll_cv_enabled():
+    """Background thread: poll Rust server for CV enabled state."""
+    global _cv_enabled
+    while _running:
+        try:
+            resp = requests.get(
+                f"{config.RUST_SERVER_URL}/api/cv/status",
+                timeout=2,
+            )
+            if resp.ok:
+                data = resp.json()
+                with _cv_lock:
+                    _cv_enabled = data.get("enabled", True)
+        except Exception:
+            pass
+        time.sleep(config.CV_STATUS_POLL_INTERVAL)
 
 
 def post_event(event: PresenceEvent):
@@ -88,6 +109,10 @@ def run_detection_loop():
     detector = PersonDetector()
     tracker = PresenceTracker()
 
+    # Start background thread to poll CV enabled state
+    poller = threading.Thread(target=_poll_cv_enabled, daemon=True)
+    poller.start()
+
     while _running:
         # Wait for a stream URL from the Rust server
         stream_url = wait_for_stream()
@@ -117,6 +142,12 @@ def run_detection_loop():
 
                 last_inference = now
                 frame_count += 1
+
+                # Skip inference when CV is disabled (GPU freed)
+                with _cv_lock:
+                    enabled = _cv_enabled
+                if not enabled:
+                    continue
 
                 # Run YOLO
                 detections = detector.detect(frame)

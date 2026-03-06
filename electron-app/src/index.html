@@ -41,6 +41,12 @@
           <span class="phone-audio-label" id="phoneAudioLabel">Phone mic → PC speakers</span>
         </div>
         <div class="intercom-bar">
+          <button class="btn btn-cv" id="btnCv" onclick="toggleCv()">
+            ◉ CV On
+          </button>
+          <span class="cv-label" id="cvLabel">person detection active</span>
+        </div>
+        <div class="intercom-bar">
           <button class="btn btn-intercom" id="btnIntercom"
                   onmousedown="intercomDown()" onmouseup="intercomUp()"
                   ontouchstart="intercomDown()" ontouchend="intercomUp()">

@@ -5,12 +5,8 @@ British female voice (jenny_dioco), fully local ONNX inference.
 Pre-generates and caches common responses at startup for instant playback.
 """
 
-import io
 import logging
 import os
-import struct
-import wave
-from pathlib import Path
 from typing import Optional
 from urllib.request import urlretrieve
 
@@ -88,16 +84,15 @@ def synthesize(text: str) -> tuple[np.ndarray, int]:
     if _voice is None:
         init()
 
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        _voice.synthesize(text, wf, speaker_id=config.PIPER_SPEAKER_ID)
+    from piper.config import SynthesisConfig
+    syn_config = SynthesisConfig(speaker_id=config.PIPER_SPEAKER_ID)
 
-    buf.seek(0)
-    with wave.open(buf, "rb") as wf:
-        sr = wf.getframerate()
-        frames = wf.readframes(wf.getnframes())
+    chunks = []
+    for audio_chunk in _voice.synthesize(text, syn_config=syn_config):
+        chunks.append(audio_chunk.audio_int16_array)
 
-    audio = np.frombuffer(frames, dtype=np.int16)
+    audio = np.concatenate(chunks)
+    sr = _voice.config.sample_rate
     return audio, sr
 
 

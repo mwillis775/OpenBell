@@ -29,6 +29,8 @@ pub enum ClientMessage {
     IntercomStop,
     /// Dashboard: mute/unmute phone→PC audio
     TogglePhoneAudio { muted: bool },
+    /// Dashboard: enable/disable CV detection
+    ToggleCv { enabled: bool },
     /// CV server: person detection event
     CvDetection {
         event_type: String,
@@ -60,6 +62,7 @@ pub enum ServerMessage {
         devices: serde_json::Value,
         stream_url: Option<String>,
         phone_audio_muted: bool,
+        cv_enabled: bool,
     },
     /// Server is starting audio – phone should open UDP
     StartAudio {
@@ -73,6 +76,8 @@ pub enum ServerMessage {
     IntercomState { active: bool },
     /// Phone audio mute state changed
     PhoneAudioMute { muted: bool },
+    /// CV detection enabled/disabled
+    CvState { enabled: bool },
     /// Error
     Error { message: String },
     /// Person detected by CV

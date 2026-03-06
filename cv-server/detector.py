@@ -13,6 +13,8 @@ from ultralytics import YOLO
 from config import (
     DETECT_CLASSES,
     DEVICE,
+    MIN_ASPECT_RATIO,
+    MIN_BOX_AREA_FRACTION,
     MODEL_PATH,
     NMS_IOU_THRESHOLD,
     PERSON_CONF_THRESHOLD,
@@ -99,5 +101,20 @@ class PersonDetector:
                     confidence=conf,
                     class_id=cls,
                 ))
+
+        # Post-filter: reject tiny boxes and wrong aspect ratios
+        if detections:
+            h, w = frame.shape[:2]
+            frame_area = float(h * w)
+            filtered = []
+            for d in detections:
+                box_w = d.x2 - d.x1
+                box_h = d.y2 - d.y1
+                if d.area < frame_area * MIN_BOX_AREA_FRACTION:
+                    continue
+                if box_h < 1 or (box_h / max(box_w, 1)) < MIN_ASPECT_RATIO:
+                    continue
+                filtered.append(d)
+            detections = filtered
 
         return detections

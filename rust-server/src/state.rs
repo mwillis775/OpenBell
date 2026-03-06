@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -54,6 +54,10 @@ pub struct AppState {
     pub phone_audio_muted: Arc<AtomicBool>,
     /// Whether the voice assistant is currently handling a call
     pub assistant_active: Arc<AtomicBool>,
+    /// Current RMS level of phone→speaker audio (shared with mic pipeline for ducking)
+    pub speaker_rms: Arc<AtomicU32>,
+    /// Whether CV detection is enabled (can be toggled from dashboard)
+    pub cv_enabled: Arc<AtomicBool>,
     /// Seconds to wait before auto-answering with the voice assistant
     pub auto_answer_secs: u64,
 }
@@ -75,6 +79,8 @@ impl AppState {
             intercom_active: RwLock::new(false),
             phone_audio_muted: Arc::new(AtomicBool::new(false)),
             assistant_active: Arc::new(AtomicBool::new(false)),
+            speaker_rms: Arc::new(AtomicU32::new(0_f32.to_bits())),
+            cv_enabled: Arc::new(AtomicBool::new(true)),
             auto_answer_secs: std::env::var("OPENBELL_AUTO_ANSWER_SECS")
                 .ok()
                 .and_then(|s| s.parse().ok())

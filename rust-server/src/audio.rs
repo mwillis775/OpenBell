@@ -23,6 +23,7 @@ use tokio::net::UdpSocket;
 use tokio::process::{Child, Command};
 use tracing::{error, info, warn};
 
+use crate::dsp::{self, Ducker, HighPassFilter, NoiseGate};
 use crate::state::AppState;
 
 /// 10 ms at 48 kHz mono i16 = 480 samples × 2 bytes = 960 bytes
@@ -74,15 +75,17 @@ impl AudioManager {
         let mute_flag = state.phone_audio_muted.clone();
         let assist_flag = state.assistant_active.clone();
         let assist_fwd_clone = assistant_fwd.clone();
+        let spk_rms = state.speaker_rms.clone();
         tokio::spawn(async move {
-            phone_to_speakers(incoming_socket, mute_flag, assist_flag, assist_fwd_clone).await;
+            phone_to_speakers(incoming_socket, mute_flag, assist_flag, assist_fwd_clone, spk_rms).await;
         });
 
         // ── PC mic → Phone speaker (intercom, gated by state) ──
         let mic_state = state.clone();
         let mic_socket = outgoing_socket.clone();
+        let mic_spk_rms = state.speaker_rms.clone();
         tokio::spawn(async move {
-            mic_to_phone(mic_state, mic_socket).await;
+            mic_to_phone(mic_state, mic_socket, mic_spk_rms).await;
         });
 
         // ── Voice assistant TTS → phone (gated by assistant_active) ──
@@ -118,11 +121,16 @@ async fn phone_to_speakers(
     mute_flag: Arc<AtomicBool>,
     assistant_flag: Arc<AtomicBool>,
     assistant_fwd: Arc<UdpSocket>,
+    speaker_rms: Arc<std::sync::atomic::AtomicU32>,
 ) {
     info!("Phone→speaker pipeline starting (phone→PC via pw-cat)");
 
     // Outer loop: restart pw-cat if it dies
     loop {
+        // DSP chain for incoming phone audio
+        let mut hpf = HighPassFilter::new(80.0);
+        let mut gate = NoiseGate::new(-40.0, 6.0, 1.5, 60.0);
+
         match spawn_speaker_process() {
             Ok(mut child) => {
                 let mut stdin = child.stdin.take().expect("pw-cat stdin");
@@ -145,16 +153,35 @@ async fn phone_to_speakers(
                             total += pcm_len as u64;
                             count += 1;
 
-                            // When muted, feed silence to keep the stream alive
-                            let data = if mute_flag.load(Ordering::Relaxed) {
-                                &zeros[..pcm_len]
+                            if mute_flag.load(Ordering::Relaxed) {
+                                // Muted — feed silence, report zero RMS
+                                dsp::update_speaker_rms(
+                                    &speaker_rms,
+                                    &[0i16; 1],
+                                );
+                                if let Err(e) = stdin.write_all(&zeros[..pcm_len]).await {
+                                    warn!("Speaker write error: {} — restarting pw-cat", e);
+                                    break;
+                                }
                             } else {
-                                &buf[HEADER_SIZE..len]
-                            };
+                                // Apply DSP: high-pass → noise gate
+                                let pcm = &mut buf[HEADER_SIZE..len];
+                                let samples: &mut [i16] = unsafe {
+                                    std::slice::from_raw_parts_mut(
+                                        pcm.as_mut_ptr() as *mut i16,
+                                        pcm_len / 2,
+                                    )
+                                };
+                                hpf.process(samples);
+                                gate.process(samples);
 
-                            if let Err(e) = stdin.write_all(data).await {
-                                warn!("Speaker write error: {} — restarting pw-cat", e);
-                                break;
+                                // Publish current speaker RMS for the mic-ducker
+                                dsp::update_speaker_rms(&speaker_rms, samples);
+
+                                if let Err(e) = stdin.write_all(&buf[HEADER_SIZE..len]).await {
+                                    warn!("Speaker write error: {} — restarting pw-cat", e);
+                                    break;
+                                }
                             }
 
                             if count % 1000 == 0 {
@@ -217,11 +244,22 @@ fn spawn_speaker_process() -> Result<Child, std::io::Error> {
 /// Continuously captures from the default PipeWire input device.
 /// Only sends UDP packets to the phone when `intercom_active` is true
 /// and `phone_audio_addr` is set.
-async fn mic_to_phone(state: Arc<AppState>, socket: Arc<UdpSocket>) {
+async fn mic_to_phone(state: Arc<AppState>, socket: Arc<UdpSocket>, speaker_rms: Arc<std::sync::atomic::AtomicU32>) {
     info!("Mic→phone pipeline starting (PC mic via pw-cat)");
 
     // Outer loop: restart pw-cat if it dies
     loop {
+        // DSP chain for outgoing mic audio
+        let mut hpf = HighPassFilter::new(80.0);
+        let mut gate = NoiseGate::new(-38.0, 6.0, 1.5, 50.0);
+        let mut ducker = Ducker::new(
+            speaker_rms.clone(),
+            -42.0,  // duck when speaker RMS > −42 dBFS
+            -30.0,  // attenuate mic by −30 dB when ducked
+            3.0,    // fast attack (ms)
+            300.0,  // slow release (ms)
+        );
+
         match spawn_mic_process() {
             Ok(mut child) => {
                 let mut stdout = child.stdout.take().expect("pw-cat stdout");
@@ -256,6 +294,17 @@ async fn mic_to_phone(state: Arc<AppState>, socket: Arc<UdpSocket>) {
                             continue;
                         }
                     };
+
+                    // Apply DSP: high-pass → noise gate → ducker
+                    let samples: &mut [i16] = unsafe {
+                        std::slice::from_raw_parts_mut(
+                            read_buf.as_mut_ptr() as *mut i16,
+                            BYTES_PER_PACKET / 2,
+                        )
+                    };
+                    hpf.process(samples);
+                    gate.process(samples);
+                    ducker.process(samples);
 
                     // Build [4-byte seq | PCM data] and send
                     pkt[..HEADER_SIZE].copy_from_slice(&seq.to_be_bytes());
