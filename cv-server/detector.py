@@ -12,6 +12,7 @@ from ultralytics import YOLO
 
 from config import (
     DETECT_CLASSES,
+    DEVICE,
     MODEL_PATH,
     NMS_IOU_THRESHOLD,
     PERSON_CONF_THRESHOLD,
@@ -58,9 +59,10 @@ class PersonDetector:
     """YOLOv8 person detector wrapper."""
 
     def __init__(self):
-        log.info("Loading YOLO model from %s", MODEL_PATH)
+        log.info("Loading YOLO model from %s (device=%s)", MODEL_PATH, DEVICE)
         self.model = YOLO(MODEL_PATH)
-        log.info("Model loaded: %s", self.model.model_name if hasattr(self.model, 'model_name') else MODEL_PATH)
+        self.model.to(DEVICE)
+        log.info("Model loaded on %s", DEVICE)
 
     def detect(self, frame: np.ndarray) -> List[Detection]:
         """
@@ -77,6 +79,7 @@ class PersonDetector:
             conf=PERSON_CONF_THRESHOLD,
             iou=NMS_IOU_THRESHOLD,
             classes=DETECT_CLASSES,
+            device=DEVICE,
             verbose=False,
         )
 

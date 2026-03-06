@@ -3,3 +3,7 @@ opencv-python-headless>=4.8.0
 numpy>=1.24.0
 requests>=2.31.0
 Pillow>=10.0.0
+# PyTorch 2.6.x is the last series with sm_60 (Pascal / GTX 1070 Ti) support.
+# Install from the cu124 index — see start.sh for --index-url usage.
+torch>=2.6.0,<2.7.0
+torchvision>=0.21.0,<0.22.0

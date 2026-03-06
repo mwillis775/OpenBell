@@ -11,13 +11,15 @@ G='\033[0;32m' R='\033[0;31m' Y='\033[0;33m' N='\033[0m'
 cleanup() {
   echo -e "\n${Y}Shutting down OpenBell...${N}"
   kill "$SERVER_PID" 2>/dev/null && echo "  Server stopped" || true
-  kill "$CV_PID" 2>/dev/null && echo "  CV server stopped" || true
+  [[ -n "$CV_PID" ]] && kill "$CV_PID" 2>/dev/null && echo "  CV server stopped" || true
   kill "$ELECTRON_PID" 2>/dev/null && echo "  Dashboard stopped" || true
   # Clean up audio pipelines spawned by the server
   pkill -f "pw-cat.*doorbell" 2>/dev/null || true
   echo -e "${G}Done.${N}"
 }
 trap cleanup EXIT INT TERM
+
+CV_PID=""
 
 # ── Kill any leftovers ──
 pkill -f doorbell-server 2>/dev/null || true
@@ -59,8 +61,8 @@ cd "$DIR/cv-server"
 if [[ ! -d "venv" ]]; then
   echo -e "${Y}  Creating Python venv...${N}"
   python3 -m venv venv
-  venv/bin/pip install -q -r requirements.txt
 fi
+venv/bin/pip install -q -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu124
 venv/bin/python main.py 2>&1 &
 CV_PID=$!
 echo -e "${G}  CV server launched (PID $CV_PID)${N}"
