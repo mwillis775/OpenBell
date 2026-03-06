@@ -98,6 +98,12 @@ function handleMessage(msg) {
     case 'person_left':
       onPersonLeft(msg);
       break;
+    case 'assistant_activate':
+      onAssistantActivate(msg);
+      break;
+    case 'assistant_deactivate':
+      onAssistantDeactivate(msg);
+      break;
     default:
       console.log('Unknown message:', msg);
   }
@@ -178,6 +184,23 @@ function onPersonDetected(msg) {
 function onPersonLeft(msg) {
   addEvent('person_left', msg.timestamp);
   console.log('CV: Person left frame');
+}
+
+function onAssistantActivate(msg) {
+  addEvent('assistant_active', msg.timestamp);
+  callBanner.className = 'call-banner answered';
+  callBannerText.textContent = '🤖 VOICE ASSISTANT ACTIVE';
+  callActions.innerHTML = `
+    <button class="btn btn-hangup" onclick="endCall()">■ End Session</button>
+  `;
+  document.title = '[🤖] Assistant Active';
+  try { ringSound.pause(); ringSound.currentTime = 0; } catch(e) {}
+  console.log('Voice assistant activated');
+}
+
+function onAssistantDeactivate(msg) {
+  addEvent('assistant_ended', msg.timestamp);
+  console.log('Voice assistant session ended');
 }
 
 // ── Actions ──
@@ -266,6 +289,8 @@ function addEvent(type, timestamp) {
     person_detected: 'Person Detected',
     person_left: 'Person Left',
     package_detected: 'Package Detected',
+    assistant_active: '🤖 Assistant Active',
+    assistant_ended: '🤖 Assistant Done',
   };
   div.innerHTML = `
     <div class="ev-type">${names[type] || type}</div>

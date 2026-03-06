@@ -52,6 +52,10 @@ pub struct AppState {
     pub intercom_active: RwLock<bool>,
     /// Mute flag for phone→PC audio (checked by cpal output callback)
     pub phone_audio_muted: Arc<AtomicBool>,
+    /// Whether the voice assistant is currently handling a call
+    pub assistant_active: Arc<AtomicBool>,
+    /// Seconds to wait before auto-answering with the voice assistant
+    pub auto_answer_secs: u64,
 }
 
 impl AppState {
@@ -70,6 +74,11 @@ impl AppState {
             stream_url: RwLock::new(None),
             intercom_active: RwLock::new(false),
             phone_audio_muted: Arc::new(AtomicBool::new(false)),
+            assistant_active: Arc::new(AtomicBool::new(false)),
+            auto_answer_secs: std::env::var("OPENBELL_AUTO_ANSWER_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(30),
         }
     }
 

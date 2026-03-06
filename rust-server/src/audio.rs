@@ -1,13 +1,17 @@
 /*!
 Audio subsystem — uses PipeWire (`pw-cat`) subprocesses for reliable audio routing.
 
-Two always-running pipelines:
+Three always-running pipelines:
 
 **Phone mic → PC speakers** (always-on, mute toggle on dashboard):
   phone → UDP :5003 → pw-cat --playback → PipeWire → speakers/headphones
+  └─ when assistant active, also mirrors to UDP :5004 → voice assistant
 
 **PC mic → phone speaker** (gated by intercom_active):
   pw-cat --record → PipeWire mic → UDP :5002 → phone
+
+**Voice assistant TTS → phone speaker** (when assistant active):
+  assistant → UDP :5005 → forwarded to phone via :5002
 */
 
 use std::process::Stdio;
@@ -53,10 +57,25 @@ impl AudioManager {
         info!("Audio incoming UDP socket bound on port 5003 (phone→PC)");
         let incoming_socket = Arc::new(incoming_socket);
 
-        // ── Phone mic → PC speakers (always-on) ──
+        // UDP socket for forwarding phone audio to voice assistant
+        let assistant_fwd = UdpSocket::bind("0.0.0.0:0")
+            .await
+            .expect("Failed to bind assistant forwarding socket");
+        let assistant_fwd = Arc::new(assistant_fwd);
+
+        // UDP port 5005: receive TTS audio from voice assistant
+        let assistant_rx = UdpSocket::bind("0.0.0.0:5005")
+            .await
+            .expect("Failed to bind assistant RX socket on port 5005");
+        info!("Audio assistant RX socket bound on port 5005 (assistant→phone)");
+        let assistant_rx = Arc::new(assistant_rx);
+
+        // ── Phone mic → PC speakers (always-on) + assistant mirror ──
         let mute_flag = state.phone_audio_muted.clone();
+        let assist_flag = state.assistant_active.clone();
+        let assist_fwd_clone = assistant_fwd.clone();
         tokio::spawn(async move {
-            phone_to_speakers(incoming_socket, mute_flag).await;
+            phone_to_speakers(incoming_socket, mute_flag, assist_flag, assist_fwd_clone).await;
         });
 
         // ── PC mic → Phone speaker (intercom, gated by state) ──
@@ -64,6 +83,13 @@ impl AudioManager {
         let mic_socket = outgoing_socket.clone();
         tokio::spawn(async move {
             mic_to_phone(mic_state, mic_socket).await;
+        });
+
+        // ── Voice assistant TTS → phone (gated by assistant_active) ──
+        let assist_state = state.clone();
+        let assist_tx = outgoing_socket.clone();
+        tokio::spawn(async move {
+            assistant_to_phone(assist_state, assistant_rx, assist_tx).await;
         });
 
         Arc::new(Self {
@@ -86,7 +112,13 @@ impl AudioManager {
 /// Receives phone audio via UDP, pipes it into `pw-cat --playback` which
 /// routes through PipeWire to whatever output device is active (Bluetooth,
 /// HDMI, built-in speakers, etc.).
-async fn phone_to_speakers(socket: Arc<UdpSocket>, mute_flag: Arc<AtomicBool>) {
+/// When the voice assistant is active, also mirrors packets to UDP 5004.
+async fn phone_to_speakers(
+    socket: Arc<UdpSocket>,
+    mute_flag: Arc<AtomicBool>,
+    assistant_flag: Arc<AtomicBool>,
+    assistant_fwd: Arc<UdpSocket>,
+) {
     info!("Phone→speaker pipeline starting (phone→PC via pw-cat)");
 
     // Outer loop: restart pw-cat if it dies
@@ -131,6 +163,13 @@ async fn phone_to_speakers(socket: Arc<UdpSocket>, mute_flag: Arc<AtomicBool>) {
                                     total / 1024,
                                     count
                                 );
+                            }
+
+                            // Mirror to voice assistant when active
+                            if assistant_flag.load(Ordering::Relaxed) {
+                                let _ = assistant_fwd
+                                    .send_to(&buf[..len], "127.0.0.1:5004")
+                                    .await;
                             }
                         }
                         Err(e) => {
@@ -266,6 +305,44 @@ fn spawn_mic_process() -> Result<Child, std::io::Error> {
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Voice assistant TTS → phone speaker
+// ═══════════════════════════════════════════════════════════════
+
+/// Receives TTS audio from the Python voice assistant on UDP 5005
+/// and forwards it to the phone via the outgoing socket (port 5002).
+async fn assistant_to_phone(
+    state: Arc<AppState>,
+    rx_socket: Arc<UdpSocket>,
+    tx_socket: Arc<UdpSocket>,
+) {
+    info!("Assistant→phone pipeline ready (5005→phone)");
+    let mut buf = [0u8; 2048];
+    let mut count: u64 = 0;
+
+    loop {
+        match rx_socket.recv_from(&mut buf).await {
+            Ok((len, _)) => {
+                if !state.assistant_active.load(Ordering::Relaxed) {
+                    continue;
+                }
+                let phone_addr = *state.phone_audio_addr.read();
+                if let Some(addr) = phone_addr {
+                    let _ = tx_socket.send_to(&buf[..len], addr).await;
+                    count += 1;
+                    if count % 500 == 0 {
+                        info!("Assistant→phone: {} packets forwarded", count);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Assistant audio recv error: {}", e);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════

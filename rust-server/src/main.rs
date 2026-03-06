@@ -37,10 +37,12 @@ async fn main() {
     info!("WebSocket + REST: http://0.0.0.0:{}", SERVER_PORT);
     info!("Audio PC→phone UDP: port 5002");
     info!("Audio phone→PC UDP: port 5003");
+    info!("Voice assistant:    UDP 5004 (→asst) / 5005 (←asst)");
     info!("==================================================");
 
     // Shared state
     let state = Arc::new(state::AppState::new());
+    info!("Auto-answer timeout: {}s", state.auto_answer_secs);
 
     // Audio manager (cpal + UDP)
     let audio_mgr = audio::AudioManager::new(state.clone()).await;

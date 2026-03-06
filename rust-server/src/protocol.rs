@@ -84,6 +84,10 @@ pub enum ServerMessage {
     },
     /// Person left (no longer in frame)
     PersonLeft { timestamp: f64 },
+    /// Voice assistant activated (auto-answer)
+    AssistantActivate { timestamp: f64 },
+    /// Voice assistant session ended
+    AssistantDeactivate { timestamp: f64 },
 }
 
 // ── Call states ──

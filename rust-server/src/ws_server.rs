@@ -19,6 +19,7 @@ use crate::protocol::{CallState, ClientMessage, ServerMessage};
 use crate::state::AppState;
 
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 /// Build the axum router
 pub fn build_router(state: Arc<AppState>, audio_mgr: Arc<AudioManager>) -> Router {
@@ -225,6 +226,17 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
             crate::relay::trigger_physical_doorbell();
             // The ring() already broadcasts CallState::Ringing
             info!("Call {} started — ringing", call_id);
+
+            // Spawn auto-answer timer for voice assistant
+            let timeout = state.auto_answer_secs;
+            let auto_ws = ws.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(timeout)).await;
+                let current = *auto_ws.app.call_state.read();
+                if current == CallState::Ringing {
+                    activate_assistant(&auto_ws);
+                }
+            });
         }
 
         ClientMessage::AudioReady { udp_port } => {
@@ -261,6 +273,7 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
             info!("Call ended from {}", addr);
             ws.audio.stop_capture();
             *state.intercom_active.write() = false;
+            state.assistant_active.store(false, Ordering::Relaxed);
             if let Some(record) = state.end_call() {
                 info!(
                     "Call {} ended — duration {:.1}s, answered={}",
@@ -364,4 +377,41 @@ fn handle_cv_event(
             warn!("CV: Unknown event type: {}", other);
         }
     }
+}
+
+// ── Voice assistant auto-answer ──
+
+/// Activate the voice assistant — auto-answer the call, start audio
+/// to the phone, and notify all clients.
+fn activate_assistant(ws: &WsState) {
+    let state = &ws.app;
+    let mut cs = state.call_state.write();
+    if *cs != CallState::Ringing {
+        return;
+    }
+    info!("Auto-answer timeout — activating voice assistant");
+    *cs = CallState::Answered;
+    drop(cs);
+
+    *state.call_was_answered.write() = true;
+    state.assistant_active.store(true, Ordering::Relaxed);
+
+    // Tell phone to start sending/receiving audio
+    let _ = state.broadcast_tx.send(ServerMessage::StartAudio {
+        sample_rate: audio::SAMPLE_RATE,
+        channels: audio::CHANNELS,
+        bits_per_sample: audio::BITS_PER_SAMPLE,
+    });
+
+    // Broadcast call state change
+    let call_id = state.current_call_id.read().clone();
+    let _ = state.broadcast_tx.send(ServerMessage::CallState {
+        state: "answered".into(),
+        call_id,
+    });
+
+    // Notify voice assistant + dashboards
+    let _ = state.broadcast_tx.send(ServerMessage::AssistantActivate {
+        timestamp: AppState::now_secs(),
+    });
 }
