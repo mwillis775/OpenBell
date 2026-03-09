@@ -84,7 +84,7 @@ impl AppState {
             auto_answer_secs: std::env::var("OPENBELL_AUTO_ANSWER_SECS")
                 .ok()
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(30),
+                .unwrap_or(5),
         }
     }
 

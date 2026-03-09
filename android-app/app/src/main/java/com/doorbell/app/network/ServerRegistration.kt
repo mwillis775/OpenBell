@@ -32,6 +32,9 @@ object ServerRegistration {
     @Volatile private var registeredIp: String? = null
     @Volatile private var registeredPort: Int = 8080
 
+    /** Stored audio-ready port so we re-send on every reconnect */
+    @Volatile private var audioReadyPort: Int? = null
+
     /** Thread-safe listeners for incoming server messages */
     private val listeners = CopyOnWriteArrayList<(JsonObject) -> Unit>()
 
@@ -39,10 +42,11 @@ object ServerRegistration {
 
     @Synchronized
     fun connect(serverUrl: String) {
-        if (webSocket != null) {
-            Log.d(TAG, "Already connected/connecting")
-            return
-        }
+        // Force-close any existing socket so reconnects always succeed
+        try { webSocket?.cancel() } catch (_: Exception) {}
+        webSocket = null
+        connected = false
+
         this.serverUrl = serverUrl
         val wsUrl = serverUrl
             .replace("http://", "ws://")
@@ -59,6 +63,12 @@ object ServerRegistration {
                 if (ip != null) {
                     Log.i(TAG, "Auto-registering on reconnect: $ip:$registeredPort")
                     register(ip, registeredPort)
+                }
+                // Re-send audio-ready so the server always knows our UDP port
+                val port = audioReadyPort
+                if (port != null) {
+                    Log.i(TAG, "Re-sending audio_ready: UDP port $port")
+                    sendAudioReady(port)
                 }
             }
 
@@ -97,16 +107,11 @@ object ServerRegistration {
         val url = serverUrl ?: return
         Thread {
             try {
-                Thread.sleep(3000)
+                Thread.sleep(2000)
             } catch (_: InterruptedException) {
                 return@Thread
             }
             Log.i(TAG, "Attempting WebSocket reconnect...")
-            synchronized(this@ServerRegistration) {
-                // Close stale socket before creating a new one
-                try { webSocket?.cancel() } catch (_: Exception) {}
-                webSocket = null
-            }
             connect(url)
         }.start()
     }
@@ -162,6 +167,7 @@ object ServerRegistration {
 
     /** Tell server we're ready to receive audio on this UDP port */
     fun sendAudioReady(udpPort: Int) {
+        audioReadyPort = udpPort
         send(mapOf("type" to "audio_ready", "udp_port" to udpPort))
     }
 

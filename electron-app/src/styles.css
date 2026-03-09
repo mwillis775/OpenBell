@@ -259,13 +259,15 @@ body::after {
 .video-container {
   position: relative;
   width: 100%;
+  height: 480px;
   border-radius: 2px;
   overflow: hidden;
   background: #000;
-  aspect-ratio: 4/3;
   border: 1px solid var(--border);
-  flex-shrink: 1;
-  min-height: 0;
+  flex-shrink: 0;
+  min-height: 80px;
+  min-width: 80px;
+  resize: both;
 }
 .video-container img {
   width: 100%;
@@ -274,7 +276,13 @@ body::after {
   display: block;
   /* Green-tinted night-vision look */
   filter: brightness(1.05);
-  transform: scaleX(-1);
+  /* Correct for phone's landscape sensor: rotate 90° CCW to portrait */
+  transform: rotate(-90deg);
+}
+/* Style the native CSS resize gripper */
+.video-container::-webkit-resizer {
+  background: linear-gradient(135deg, transparent 60%, var(--green-dim) 60%, var(--green-dim) 70%, transparent 70%, transparent 80%, var(--green-dim) 80%);
+  border: none;
 }
 .no-feed {
   display: flex;
@@ -490,7 +498,7 @@ body::after {
   .header h1 { font-size: 13px; letter-spacing: 1px; }
   .header .status { font-size: 11px; gap: 5px; }
   .status-dot { width: 8px; height: 8px; }
-  .video-container { aspect-ratio: 16/9; }
+  .video-container { height: 300px; }
   .call-banner { padding: 10px 12px; font-size: 14px; letter-spacing: 1px; }
   .btn { padding: 6px 14px; font-size: 12px; }
   .btn-answer, .btn-hangup, .btn-ignore { padding: 8px 20px; font-size: 13px; }

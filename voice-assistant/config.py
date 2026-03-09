@@ -41,7 +41,7 @@ TTS_CACHE_DIR = os.environ.get(
 )
 
 # ── Conversation ──
-AUTO_ANSWER_TIMEOUT = int(os.environ.get("OPENBELL_AUTO_ANSWER_SECS", "30"))
+AUTO_ANSWER_TIMEOUT = int(os.environ.get("OPENBELL_AUTO_ANSWER_SECS", "5"))
 LISTEN_TIMEOUT = float(os.environ.get("OPENBELL_LISTEN_TIMEOUT", "8.0"))
 SILENCE_THRESHOLD = float(os.environ.get("OPENBELL_SILENCE_THRESHOLD", "0.02"))
 SILENCE_DURATION = float(os.environ.get("OPENBELL_SILENCE_DURATION", "2.0"))

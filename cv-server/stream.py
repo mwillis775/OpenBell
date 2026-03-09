@@ -58,15 +58,19 @@ class MJPEGGrabber:
             self._cap.release()
 
         log.info("Opening MJPEG stream: %s", self.url)
-        self._cap = cv2.VideoCapture(self.url)
+        # Open with FFMPEG backend and minimal buffering for lowest latency
+        self._cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG)
 
         if not self._cap.isOpened():
             log.warning("Failed to open stream: %s", self.url)
             self._cap = None
             return False
 
-        # Set a read timeout via buffer size (reduce latency)
+        # Minimise internal buffering — we always want the latest frame
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Short read timeout so we detect a dead stream quickly
+        self._cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+        self._cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
         log.info("Stream opened successfully")
         return True
 
@@ -77,6 +81,9 @@ class MJPEGGrabber:
         ret, frame = self._cap.read()
         if not ret or frame is None:
             return None
+        # Phone streams raw sensor orientation (landscape).
+        # Rotate 90° CCW to get portrait.
+        frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         return frame
 
     def release(self):

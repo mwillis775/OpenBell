@@ -129,30 +129,39 @@ async fn handle_socket(socket: WebSocket, ws: Arc<WsState>, addr: SocketAddr) {
         let auto_ip = addr.ip().to_string();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            let already = auto_ws.app.devices.read().contains_key(&auto_ip);
-            if !already {
-                let stream = format!("http://{}:8080/video", auto_ip);
-                info!("Auto-registering unregistered phone {} (fallback)", auto_ip);
-                let dev = crate::state::DeviceInfo {
-                    device_ip: auto_ip.clone(),
-                    stream_url: Some(stream.clone()),
-                    capabilities: vec!["camera".into(), "doorbell_button".into(), "audio_playback".into()],
-                    device_type: "doorbell".into(),
-                    device_name: "Front Door".into(),
-                    registered_at: AppState::now_secs(),
-                    last_seen: AppState::now_secs(),
-                };
-                auto_ws.app.devices.write().insert(auto_ip.clone(), dev);
-                *auto_ws.app.phone_ip.write() = Some(auto_ip);
-                *auto_ws.app.stream_url.write() = Some(stream);
-                let _ = auto_ws.app.broadcast_tx.send(ServerMessage::Status {
-                    call_state: auto_ws.app.call_state.read().to_string(),
-                    devices: serde_json::to_value(&*auto_ws.app.devices.read()).unwrap_or_default(),
-                    stream_url: auto_ws.app.stream_url.read().clone(),
-                    phone_audio_muted: auto_ws.app.phone_audio_muted.load(Ordering::Relaxed),
-                    cv_enabled: auto_ws.app.cv_enabled.load(Ordering::Relaxed),
-                });
+            // Check if ANY device has already registered (the phone may
+            // register under a different IP than the WebSocket source IP,
+            // e.g. 192.168.4.x vs 192.168.0.x on dual-NIC setups).
+            let has_any_device = !auto_ws.app.devices.read().is_empty();
+            let has_stream = auto_ws.app.stream_url.read().is_some();
+            if has_any_device || has_stream {
+                info!(
+                    "Skipping auto-register for {} — a device is already registered",
+                    auto_ip
+                );
+                return;
             }
+            let stream = format!("http://{}:8080/video", auto_ip);
+            info!("Auto-registering unregistered phone {} (fallback)", auto_ip);
+            let dev = crate::state::DeviceInfo {
+                device_ip: auto_ip.clone(),
+                stream_url: Some(stream.clone()),
+                capabilities: vec!["camera".into(), "doorbell_button".into(), "audio_playback".into()],
+                device_type: "doorbell".into(),
+                device_name: "Front Door".into(),
+                registered_at: AppState::now_secs(),
+                last_seen: AppState::now_secs(),
+            };
+            auto_ws.app.devices.write().insert(auto_ip.clone(), dev);
+            *auto_ws.app.phone_ip.write() = Some(auto_ip);
+            *auto_ws.app.stream_url.write() = Some(stream);
+            let _ = auto_ws.app.broadcast_tx.send(ServerMessage::Status {
+                call_state: auto_ws.app.call_state.read().to_string(),
+                devices: serde_json::to_value(&*auto_ws.app.devices.read()).unwrap_or_default(),
+                stream_url: auto_ws.app.stream_url.read().clone(),
+                phone_audio_muted: auto_ws.app.phone_audio_muted.load(Ordering::Relaxed),
+                cv_enabled: auto_ws.app.cv_enabled.load(Ordering::Relaxed),
+            });
         });
     }
 
@@ -264,7 +273,15 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
         }
 
         ClientMessage::AudioReady { udp_port } => {
-            let phone_ip = addr.ip();
+            // Use the registered device_ip if available — the phone's WS
+            // source IP (e.g. 192.168.0.x via NAT) may differ from its
+            // actual reachable IP (e.g. 192.168.4.x on a different NIC).
+            let phone_ip = state
+                .phone_ip
+                .read()
+                .as_ref()
+                .and_then(|ip| ip.parse::<std::net::IpAddr>().ok())
+                .unwrap_or_else(|| addr.ip());
             let audio_addr = SocketAddr::new(phone_ip, udp_port);
             *state.phone_audio_addr.write() = Some(audio_addr);
             info!("Phone audio ready at {}", audio_addr);

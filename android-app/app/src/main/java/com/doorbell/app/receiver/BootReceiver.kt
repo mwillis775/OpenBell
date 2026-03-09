@@ -6,15 +6,11 @@ import android.content.Intent
 import com.doorbell.app.ui.MainActivity
 
 /**
- * Auto-start the doorbell app when the phone boots.
+ * Receives BOOT_COMPLETED but does NOT auto-launch the app.
+ * The user opens OpenBell manually; kiosk mode activates once the app starts.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(launchIntent)
-        }
+        // intentionally empty — boot receiver kept for future use
     }
 }

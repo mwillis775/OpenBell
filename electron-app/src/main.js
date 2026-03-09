@@ -1,6 +1,10 @@
 const { app, BrowserWindow, Notification, session } = require('electron');
 const path = require('path');
 
+// Disable GPU hardware acceleration to avoid Vulkan driver failures
+// (vkCreateInstance: Found no drivers!) that break image rendering.
+app.disableHardwareAcceleration();
+
 let mainWindow;
 
 function createWindow() {

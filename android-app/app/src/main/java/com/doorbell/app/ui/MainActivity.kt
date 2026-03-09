@@ -1,6 +1,8 @@
 package com.doorbell.app.ui
 
 import android.Manifest
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.drawable.GradientDrawable
@@ -10,7 +12,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.UserManager
 import android.provider.Settings
+import android.util.Log
 import android.view.View
 import android.view.WindowInsetsController
 import android.view.WindowManager
@@ -22,6 +26,7 @@ import androidx.core.view.WindowCompat
 import com.doorbell.app.R
 import com.doorbell.app.databinding.ActivityMainBinding
 import com.doorbell.app.network.ServerRegistration
+import com.doorbell.app.receiver.DoorbellDeviceAdmin
 import com.doorbell.app.service.AudioStreamService
 import com.doorbell.app.service.CameraStreamService
 import java.net.Inet4Address
@@ -78,8 +83,9 @@ class MainActivity : AppCompatActivity() {
         streamPort = getSharedPreferences("doorbell_prefs", MODE_PRIVATE)
             .getInt("stream_port", CameraStreamService.DEFAULT_PORT)
 
-        // Close / exit button
+        // Close / exit button — leaves kiosk mode then exits
         binding.btnClose.setOnClickListener {
+            stopLockTask()
             finishAffinity()
         }
 
@@ -91,6 +97,7 @@ class MainActivity : AppCompatActivity() {
 
         setIndicator(ConnectionState.DISCONNECTED)
         requestBatteryOptimizationExemption()
+        enterKioskMode()
         requestCameraPermission()
     }
 
@@ -249,7 +256,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun getServerUrl(): String {
         val prefs = getSharedPreferences("doorbell_prefs", MODE_PRIVATE)
-        return prefs.getString("server_url", "http://192.168.1.100:5000") ?: "http://192.168.1.100:5000"
+        return prefs.getString("server_url", "http://192.168.0.181:5000") ?: "http://192.168.0.181:5000"
     }
 
     private fun requestBatteryOptimizationExemption() {
@@ -260,5 +267,66 @@ class MainActivity : AppCompatActivity() {
             }
             startActivity(intent)
         }
+    }
+
+    // ── Kiosk / Lock-Task Mode ──────────────────────────────────────────
+
+    /**
+     * If this app has been set as device owner, enable lock-task mode.
+     * This pins the app to the screen: no status bar, no notifications,
+     * no recent-apps, no home button — a true kiosk appliance.
+     *
+     * To set as device owner (one-time, via ADB with phone USB-connected):
+     *   adb shell dpm set-device-owner com.doorbell.app/.receiver.DoorbellDeviceAdmin
+     */
+    private fun enterKioskMode() {
+        val dpm = getSystemService(DevicePolicyManager::class.java)
+        val adminComponent = DoorbellDeviceAdmin.getComponentName(this)
+
+        if (!dpm.isDeviceOwnerApp(packageName)) {
+            Log.i(TAG, "Not device owner — skipping kiosk mode. " +
+                    "Run: adb shell dpm set-device-owner com.doorbell.app/.receiver.DoorbellDeviceAdmin")
+            return
+        }
+
+        // Allow our package (and only our package) to enter lock-task mode
+        dpm.setLockTaskPackages(adminComponent, arrayOf(packageName))
+
+        // Configure which system features remain available (almost none)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            dpm.setLockTaskFeatures(adminComponent,
+                DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
+        }
+
+        // Block user additions, app installs, and safe-boot
+        setUserRestrictions(dpm, adminComponent)
+
+        // Pin this activity
+        startLockTask()
+        Log.i(TAG, "Kiosk mode active — app is pinned")
+    }
+
+    /**
+     * Apply user restrictions that turn the phone into a locked-down appliance.
+     *
+     * NOTE: We intentionally do NOT set DISALLOW_INSTALL_APPS here.
+     * The Play Store and package installer are already disabled via
+     * kiosk-setup.sh, and setting that restriction also blocks ADB
+     * installs — which makes it impossible to push updates over USB.
+     */
+    private fun setUserRestrictions(dpm: DevicePolicyManager, admin: ComponentName) {
+        val restrictions = listOf(
+            UserManager.DISALLOW_INSTALL_UNKNOWN_SOURCES,
+            UserManager.DISALLOW_SAFE_BOOT,
+            UserManager.DISALLOW_ADD_USER,
+            UserManager.DISALLOW_MOUNT_PHYSICAL_MEDIA,
+        )
+        for (r in restrictions) {
+            dpm.addUserRestriction(admin, r)
+        }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }

@@ -116,9 +116,16 @@ function handleMessage(msg) {
 }
 
 function updateStatus(msg) {
-  if (msg.stream_url && msg.stream_url !== streamUrl) {
-    streamUrl = msg.stream_url;
-    setVideoFeed(streamUrl);
+  if (msg.stream_url) {
+    // Only reset the feed when the stream URL actually changes.
+    // Resetting on every status broadcast kills the live MJPEG connection.
+    if (msg.stream_url !== streamUrl) {
+      streamUrl = msg.stream_url;
+      setVideoFeed(streamUrl);
+    } else if (!streamUrl) {
+      streamUrl = msg.stream_url;
+      setVideoFeed(streamUrl);
+    }
   }
   if (msg.call_state) {
     updateCallState(msg.call_state);
@@ -287,24 +294,57 @@ function updatePhoneAudioMute(muted) {
 }
 
 // ── Video feed ──
+let feedCheckTimer = null;
+let feedSetAt = 0;          // timestamp when we last set a new feed URL
+let feedRetryPending = false;
+let currentFeedUrl = '';     // the actual src we last applied (with cache-bust)
+
 function setVideoFeed(url) {
   if (!url) return;
-  videoFeed.src = url;
+
+  // Cache-bust to force a fresh MJPEG connection
+  const bustUrl = url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+  currentFeedUrl = bustUrl;
+  feedSetAt = Date.now();
+  feedRetryPending = false;
+  videoFeed.src = bustUrl;
   videoFeed.style.display = 'block';
   noFeed.style.display = 'none';
+  console.log('Video feed set:', url);
+
   videoFeed.onerror = () => {
-    videoFeed.style.display = 'none';
-    noFeed.style.display = 'flex';
-    noFeed.textContent = 'Camera feed lost';
-    // Retry after a few seconds
-    setTimeout(() => {
-      if (streamUrl) {
-        videoFeed.src = streamUrl;
-        videoFeed.style.display = 'block';
-        noFeed.style.display = 'none';
-      }
-    }, 3000);
+    console.warn('Video feed error — will retry');
+    scheduleVideoRetry();
   };
+
+  // Periodic health check: if the img naturalWidth is 0 long after we
+  // started loading, the MJPEG connection has silently died.  Reconnect.
+  // Grace period: don't check for the first 12 seconds after setting a
+  // new source — the connection needs time to establish and deliver a frame.
+  clearInterval(feedCheckTimer);
+  feedCheckTimer = setInterval(() => {
+    if (!streamUrl || videoFeed.style.display !== 'block') return;
+    const elapsed = Date.now() - feedSetAt;
+    if (elapsed < 12000) return;  // grace period — still loading
+    if (videoFeed.naturalWidth === 0) {
+      console.warn('Video feed stalled (no frames for ' + Math.round(elapsed/1000) + 's) — reconnecting');
+      scheduleVideoRetry();
+    }
+  }, 8000);
+}
+
+function scheduleVideoRetry() {
+  if (feedRetryPending) return;  // don't stack retries
+  feedRetryPending = true;
+  videoFeed.style.display = 'none';
+  noFeed.style.display = 'flex';
+  noFeed.textContent = 'Camera feed lost — reconnecting...';
+  // Remove old src to close the HTTP connection
+  videoFeed.src = '';
+  setTimeout(() => {
+    feedRetryPending = false;
+    if (streamUrl) setVideoFeed(streamUrl);
+  }, 3000);
 }
 
 // ── Event log ──
