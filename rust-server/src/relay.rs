@@ -42,12 +42,12 @@ the circuit and the physical chime rings.
 
 Set the relay URL via environment variable:
 ```
-DOORBELL_RELAY_URL=http://192.168.0.50/relay/0?turn=on&timer=1
+DOORBELL_RELAY_URL=http://<RELAY_IP>/relay/0?turn=on&timer=1
 ```
 
 Or for a Tasmota device:
 ```
-DOORBELL_RELAY_URL=http://192.168.0.50/cm?cmnd=Power%20On
+DOORBELL_RELAY_URL=http://<RELAY_IP>/cm?cmnd=Power%20On
 ```
 */
 

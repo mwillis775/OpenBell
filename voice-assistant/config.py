@@ -18,11 +18,12 @@ PACKET_PCM_BYTES = PACKET_SAMPLES * BYTES_PER_SAMPLE  # 960
 SEQ_HEADER_SIZE = 4
 
 # ── UDP ports ──
-ASSISTANT_LISTEN_PORT = 5004  # Receive phone mic audio from Rust server
-ASSISTANT_SEND_PORT = 5005    # Send TTS audio to Rust server
-RUST_SEND_TARGET = ("127.0.0.1", 5005)   # Where Rust listens for our TTS audio
+ASSISTANT_LISTEN_PORT = int(os.environ.get("OPENBELL_ASSISTANT_LISTEN_PORT", "5004"))  # Receive phone mic audio from Rust server
+ASSISTANT_SEND_PORT = int(os.environ.get("OPENBELL_ASSISTANT_SEND_PORT", "5005"))    # Send TTS audio to Rust server
+RUST_SEND_HOST = os.environ.get("OPENBELL_RUST_HOST", "127.0.0.1")
+RUST_SEND_TARGET = (RUST_SEND_HOST, ASSISTANT_SEND_PORT)   # Where Rust listens for our TTS audio
 # Note: we send TO the Rust server's port 5005 listener.  We actually send
-# to the phone via the Rust server's outgoing socket, so we send TO 127.0.0.1:5005.
+# to the phone via the Rust server's outgoing socket, so we send TO localhost:5005.
 # The Rust server forwards from 5005 → phone.
 
 # ── Whisper STT ──

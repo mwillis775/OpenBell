@@ -5,6 +5,13 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Source .env if present (user-specific configuration)
+if [[ -f "$DIR/.env" ]]; then
+  set -a
+  source "$DIR/.env"
+  set +a
+fi
+
 # Colors
 G='\033[0;32m' R='\033[0;31m' Y='\033[0;33m' N='\033[0m'
 

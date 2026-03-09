@@ -3,6 +3,7 @@ package com.doorbell.app.ui
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.doorbell.app.BuildConfig
 import com.doorbell.app.databinding.ActivitySettingsBinding
 
 class SettingsActivity : AppCompatActivity() {
@@ -27,7 +28,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun loadSettings() {
         val prefs = getSharedPreferences("doorbell_prefs", MODE_PRIVATE)
-        binding.etServerUrl.setText(prefs.getString("server_url", "http://192.168.0.181:5000"))
+        binding.etServerUrl.setText(prefs.getString("server_url", BuildConfig.DEFAULT_SERVER_URL))
         binding.etDeviceName.setText(prefs.getString("device_name", "Front Door"))
         binding.etStreamPort.setText(prefs.getInt("stream_port", 8080).toString())
         binding.etCallTimeout.setText(prefs.getInt("call_timeout", 30).toString())

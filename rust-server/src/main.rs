@@ -20,7 +20,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 
-const SERVER_PORT: u16 = 5000;
+fn server_port() -> u16 {
+    std::env::var("OPENBELL_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5000)
+}
 
 #[tokio::main]
 async fn main() {
@@ -35,7 +40,8 @@ async fn main() {
     info!("==================================================");
     info!("Doorbell System — Rust Coordination Server");
     info!("==================================================");
-    info!("WebSocket + REST: http://0.0.0.0:{}", SERVER_PORT);
+    let port = server_port();
+    info!("WebSocket + REST: http://0.0.0.0:{}", port);
     info!("Audio PC→phone UDP: port 5002");
     info!("Audio phone→PC UDP: port 5003");
     info!("Voice assistant:    UDP 5004 (→asst) / 5005 (←asst)");
@@ -49,13 +55,13 @@ async fn main() {
     let audio_mgr = audio::AudioManager::new(state.clone()).await;
 
     // Advertise via mDNS
-    discovery::advertise(SERVER_PORT);
+    discovery::advertise(port);
 
     // Build axum router
     let app = ws_server::build_router(state.clone(), audio_mgr);
 
     // Start serving
-    let addr = SocketAddr::from(([0, 0, 0, 0], SERVER_PORT));
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("Listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(

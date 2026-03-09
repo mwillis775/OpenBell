@@ -194,8 +194,10 @@ async fn phone_to_speakers(
 
                             // Mirror to voice assistant when active
                             if assistant_flag.load(Ordering::Relaxed) {
+                                let assistant_addr = std::env::var("OPENBELL_ASSISTANT_LISTEN")
+                                    .unwrap_or_else(|_| "127.0.0.1:5004".into());
                                 let _ = assistant_fwd
-                                    .send_to(&buf[..len], "127.0.0.1:5004")
+                                    .send_to(&buf[..len], &assistant_addr)
                                     .await;
                             }
                         }

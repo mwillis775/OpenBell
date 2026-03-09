@@ -119,7 +119,7 @@ adb shell "am start -n com.doorbell.app/.ui.SettingsActivity"
 ```
 
 In the Settings screen:
-- **Server URL**: `http://<YOUR_PC_IP>:5000` (e.g., `http://192.168.0.181:5000`)
+- **Server URL**: `http://<YOUR_PC_IP>:5000` (find your IP with `hostname -I | awk '{print $1}'`)
 - **Device Name**: Whatever you like (e.g., "Front Door")
 - **Stream Port**: `8080` (default is fine)
 
@@ -179,7 +179,7 @@ If your house has a wired doorbell chime (the kind with a transformer), you can 
 3. Set the relay URL when starting:
 
 ```bash
-DOORBELL_RELAY_URL="http://192.168.0.50/relay/0?turn=on&timer=1" ./start.sh
+DOORBELL_RELAY_URL="http://<RELAY_IP>/relay/0?turn=on&timer=1" ./start.sh
 ```
 
 Now the physical chime rings AND the PC plays the digital ding-dong when someone presses the button.
@@ -225,6 +225,31 @@ Any cheap Android phone with a camera works. Tested on:
 | Any old phone you have | $0 | As long as it has Android 8+ and WiFi |
 
 The phone doesn't need cell service. WiFi only is fine.
+
+---
+
+## Environment Variables
+
+All configuration is done through environment variables. Copy `.env.example` to `.env` and edit as needed — `start.sh` sources it automatically.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENBELL_PORT` | `5000` | Rust server listen port |
+| `OPENBELL_SERVER_URL` | `http://localhost:5000` | Server URL (used by CV server, voice assistant, Android build) |
+| `OPENBELL_WS_URL` | `ws://localhost:5000/ws` | WebSocket URL (used by Electron dashboard, voice assistant) |
+| `DOORBELL_RELAY_URL` | *(unset — relay disabled)* | WiFi relay HTTP endpoint (e.g. `http://<RELAY_IP>/relay/0?turn=on&timer=1`) |
+| `OPENBELL_RUST_HOST` | `127.0.0.1` | Host address of the Rust server for inter-process UDP |
+| `OPENBELL_ASSISTANT_LISTEN_PORT` | `5004` | UDP port: Rust → voice assistant audio |
+| `OPENBELL_ASSISTANT_SEND_PORT` | `5005` | UDP port: voice assistant → Rust TTS audio |
+| `OPENBELL_ASSISTANT_LISTEN` | `127.0.0.1:5004` | Full address Rust uses to forward mic audio to assistant |
+| `OPENBELL_YOLO_MODEL` | `yolov8s.pt` | Path to YOLO model weights |
+| `OPENBELL_DEVICE` | `cuda` | Inference device (`cpu`, `cuda`, `cuda:0`) |
+| `OPENBELL_WHISPER_MODEL` | `base` | Whisper STT model size |
+| `OPENBELL_WHISPER_DEVICE` | `cpu` | Whisper inference device |
+| `OPENBELL_PIPER_VOICE` | `en_GB-jenny_dioco-medium` | Piper TTS voice |
+| `OPENBELL_AUTO_ANSWER_SECS` | `5` | Seconds before voice assistant auto-answers |
+
+See `.env.example` for the full list.
 
 ---
 

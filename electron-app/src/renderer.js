@@ -1,7 +1,7 @@
 // OpenBell Dashboard — Renderer
 // Connects to Rust server via WebSocket
 
-const SERVER_URL = 'ws://localhost:5000/ws';
+const SERVER_URL = window.electronAPI?.serverWsUrl || 'ws://localhost:5000/ws';
 let ws = null;
 let callState = 'idle';
 let reconnectTimer = null;

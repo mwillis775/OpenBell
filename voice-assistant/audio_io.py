@@ -119,7 +119,7 @@ class AudioSender:
     def __init__(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._seq: int = 0
-        self._target = ("127.0.0.1", 5005)  # Rust server's assistant RX port
+        self._target = (config.RUST_SEND_HOST, config.ASSISTANT_SEND_PORT)
 
     def send_audio(self, audio_48k: np.ndarray, realtime: bool = True):
         """

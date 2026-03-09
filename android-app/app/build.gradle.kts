@@ -13,6 +13,11 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // Default server URL — override at build time:
+        //   OPENBELL_SERVER_URL="http://10.0.0.5:5000" ./gradlew assembleDebug
+        val serverUrl = System.getenv("OPENBELL_SERVER_URL") ?: "http://localhost:5000"
+        buildConfigField("String", "DEFAULT_SERVER_URL", "\"${serverUrl}\"")
     }
 
     buildTypes {
@@ -36,6 +41,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 

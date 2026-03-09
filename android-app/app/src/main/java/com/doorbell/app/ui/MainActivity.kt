@@ -23,6 +23,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import com.doorbell.app.BuildConfig
 import com.doorbell.app.R
 import com.doorbell.app.databinding.ActivityMainBinding
 import com.doorbell.app.network.ServerRegistration
@@ -256,7 +257,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun getServerUrl(): String {
         val prefs = getSharedPreferences("doorbell_prefs", MODE_PRIVATE)
-        return prefs.getString("server_url", "http://192.168.0.181:5000") ?: "http://192.168.0.181:5000"
+        return prefs.getString("server_url", BuildConfig.DEFAULT_SERVER_URL) ?: BuildConfig.DEFAULT_SERVER_URL
     }
 
     private fun requestBatteryOptimizationExemption() {
