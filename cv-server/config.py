@@ -15,13 +15,16 @@ MODEL_PATH = os.environ.get(
 
 # ── Detection tuning ──
 # Minimum confidence for person class (COCO class 0)
-PERSON_CONF_THRESHOLD = float(os.environ.get("OPENBELL_PERSON_CONF", "0.55"))
+PERSON_CONF_THRESHOLD = float(os.environ.get("OPENBELL_PERSON_CONF", "0.60"))
 # IOU threshold for NMS
 NMS_IOU_THRESHOLD = float(os.environ.get("OPENBELL_NMS_IOU", "0.5"))
-# Only detect "person" (COCO class 0)
-DETECT_CLASSES = [0]
+# Detect person (0) + common false-positive classes for disambiguation
+# fire hydrant (10), bench (13), potted plant (58), vase (75)
+DETECT_CLASSES = [0, 10, 13, 58, 75]
+# Classes that are NOT people — used by detector to suppress false positives
+FALSE_POSITIVE_CLASSES = {10, 13, 58, 75}
 # Minimum bounding-box area as a fraction of the frame area (reject tiny ghosts)
-MIN_BOX_AREA_FRACTION = float(os.environ.get("OPENBELL_MIN_BOX_AREA", "0.005"))
+MIN_BOX_AREA_FRACTION = float(os.environ.get("OPENBELL_MIN_BOX_AREA", "0.008"))
 # Minimum height/width aspect ratio — persons are taller than wide
 MIN_ASPECT_RATIO = float(os.environ.get("OPENBELL_MIN_ASPECT_RATIO", "0.8"))
 

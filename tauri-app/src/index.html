@@ -10,8 +10,8 @@
   <div class="header">
     <h1>⟫ OpenBell</h1>
     <div class="header-right">
-      <button class="btn btn-gallery" id="btnGallery" onclick="openGallery()">◫ Gallery</button>
-      <button class="btn btn-lock" id="btnLock" onclick="toggleLayoutLock()">🔒 Locked</button>
+      <button class="btn btn-gallery" id="btnGallery">◫ Gallery</button>
+      <button class="btn btn-lock" id="btnLock">🔒 Locked</button>
       <div class="status">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">Connecting...</span>
@@ -22,8 +22,8 @@
   <div id="callBanner" class="call-banner">
     <span id="callBannerText">▶ DOORBELL RINGING ◀</span>
     <div class="actions" id="callActions">
-      <button class="btn btn-answer" onclick="answerCall()">Answer</button>
-      <button class="btn btn-ignore" onclick="endCall()">Ignore</button>
+      <button class="btn btn-answer">Answer</button>
+      <button class="btn btn-ignore">Ignore</button>
     </div>
   </div>
 
@@ -36,21 +36,19 @@
           <img id="videoFeed" style="display:none" alt="Camera Feed">
         </div>
         <div class="intercom-bar">
-          <button class="btn btn-phone-audio" id="btnPhoneAudio" onclick="togglePhoneAudio()">
+          <button class="btn btn-phone-audio" id="btnPhoneAudio">
             ▶ Audio On
           </button>
           <span class="phone-audio-label" id="phoneAudioLabel">Phone mic → PC speakers</span>
         </div>
         <div class="intercom-bar">
-          <button class="btn btn-cv" id="btnCv" onclick="toggleCv()">
+          <button class="btn btn-cv" id="btnCv">
             ◉ CV On
           </button>
           <span class="cv-label" id="cvLabel">person detection active</span>
         </div>
         <div class="intercom-bar">
-          <button class="btn btn-intercom" id="btnIntercom"
-                  onmousedown="intercomDown()" onmouseup="intercomUp()"
-                  ontouchstart="intercomDown()" ontouchend="intercomUp()">
+          <button class="btn btn-intercom" id="btnIntercom">
             ◉ Hold to Talk
           </button>
           <span class="intercom-hint" id="intercomHint">push-to-talk intercom</span>
@@ -79,21 +77,65 @@
   <!-- Gallery Overlay -->
   <div id="galleryOverlay" class="gallery-overlay">
     <div class="gallery-header">
-      <h2>◫ Media Gallery</h2>
-      <div class="gallery-actions">
-        <button class="btn btn-gallery-refresh" onclick="refreshGallery()">↻ Refresh</button>
-        <button class="btn btn-gallery-close" onclick="closeGallery()">✕ Close</button>
+      <div class="gallery-header-left">
+        <h2>◫ Media Gallery</h2>
+        <div class="gallery-tabs">
+          <button class="gallery-tab active" data-filter="all">All</button>
+          <button class="gallery-tab" data-filter="snapshot">Snapshots</button>
+          <button class="gallery-tab" data-filter="recording">Recordings</button>
+        </div>
+      </div>
+      <div class="gallery-header-right">
+        <div class="gallery-search-box">
+          <input type="text" id="gallerySearch" class="gallery-search" placeholder="search files..." spellcheck="false" autocomplete="off">
+        </div>
+        <button class="btn btn-gallery-select-mode" id="btnSelectMode">☐ Select</button>
+        <button class="btn btn-gallery-delete-selected" id="btnDeleteSelected" style="display:none">✕ Delete Selected</button>
+        <button class="btn btn-gallery-refresh" id="btnGalleryRefresh">↻ Refresh</button>
+        <button class="btn btn-gallery-close" id="btnGalleryClose">✕ Close</button>
       </div>
     </div>
-    <div class="gallery-status" id="galleryStatus"></div>
-    <div class="gallery-grid" id="galleryGrid"></div>
+    <div class="gallery-toolbar">
+      <div class="gallery-status" id="galleryStatus"></div>
+      <div class="gallery-storage" id="galleryStorage"></div>
+    </div>
+    <div class="gallery-body" id="galleryBody">
+      <div class="gallery-grid" id="galleryGrid"></div>
+      <div class="gallery-empty" id="galleryEmpty" style="display:none">
+        <div class="gallery-empty-icon">◫</div>
+        <div class="gallery-empty-text">No media found</div>
+      </div>
+    </div>
   </div>
 
   <!-- Lightbox for full-size media -->
-  <div id="lightbox" class="lightbox" onclick="closeLightbox(event)">
-    <div class="lightbox-content" id="lightboxContent"></div>
-    <button class="lightbox-close" onclick="closeLightbox()">✕</button>
-    <div class="lightbox-info" id="lightboxInfo"></div>
+  <div id="lightbox" class="lightbox">
+    <button class="lightbox-nav lightbox-prev" id="btnLightboxPrev">‹</button>
+    <div class="lightbox-stage">
+      <div class="lightbox-content" id="lightboxContent"></div>
+    </div>
+    <button class="lightbox-nav lightbox-next" id="btnLightboxNext">›</button>
+    <button class="lightbox-close" id="btnLightboxClose">✕</button>
+    <div class="lightbox-bottom">
+      <div class="lightbox-info" id="lightboxInfo"></div>
+      <div class="lightbox-actions">
+        <button class="btn btn-lightbox-download" id="btnLightboxDownload">↓ Download</button>
+        <button class="btn btn-lightbox-delete" id="btnLightboxDelete">✕ Delete</button>
+      </div>
+      <div class="lightbox-counter" id="lightboxCounter"></div>
+    </div>
+  </div>
+
+  <!-- Delete confirmation dialog -->
+  <div id="deleteDialog" class="delete-dialog">
+    <div class="delete-dialog-box">
+      <div class="delete-dialog-title">Confirm Delete</div>
+      <div class="delete-dialog-msg" id="deleteDialogMsg"></div>
+      <div class="delete-dialog-actions">
+        <button class="btn btn-delete-cancel" id="btnDeleteCancel">Cancel</button>
+        <button class="btn btn-delete-confirm" id="btnDeleteConfirm">Delete</button>
+      </div>
+    </div>
   </div>
 
   <audio id="ringSound" loop preload="auto">

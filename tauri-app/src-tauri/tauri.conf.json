@@ -19,13 +19,15 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.*.* http://10.*.*.* data: blob:; media-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.*.* http://10.*.*.*; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:* http://192.168.*.* http://10.*.*.* ws://192.168.*.* ws://10.*.*.*; font-src 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src 'self' http: https: ws: wss:; font-src 'self' data:"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "icon": [
+      "icons/icon-32.png",
+      "icons/icon-128.png",
       "icons/icon.png"
     ]
   }

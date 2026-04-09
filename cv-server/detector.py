@@ -1,7 +1,9 @@
 """
 OpenBell CV Server — YOLOv8 person detector
 
-Loads the YOLOv8n model and provides a simple inference API.
+Loads the YOLOv8s model and provides a smart inference API.
+Detects both persons and common false-positive objects (fire hydrants,
+potted plants, benches, vases) to disambiguate.
 """
 
 import logging
@@ -13,6 +15,7 @@ from ultralytics import YOLO
 from config import (
     DETECT_CLASSES,
     DEVICE,
+    FALSE_POSITIVE_CLASSES,
     MIN_ASPECT_RATIO,
     MIN_BOX_AREA_FRACTION,
     MODEL_PATH,
@@ -70,6 +73,10 @@ class PersonDetector:
         """
         Run inference on a BGR frame, return person detections.
 
+        Also detects common false-positive objects (fire hydrants, potted
+        plants, benches, vases) and suppresses person detections that
+        overlap heavily with them — this catches the gnome/hydrant problem.
+
         Args:
             frame: OpenCV BGR image (H, W, 3) uint8
 
@@ -78,14 +85,14 @@ class PersonDetector:
         """
         results = self.model.predict(
             frame,
-            conf=PERSON_CONF_THRESHOLD,
+            conf=0.25,  # low threshold to catch FP objects
             iou=NMS_IOU_THRESHOLD,
             classes=DETECT_CLASSES,
             device=DEVICE,
             verbose=False,
         )
 
-        detections: List[Detection] = []
+        all_detections: List[Detection] = []
         for result in results:
             if result.boxes is None:
                 continue
@@ -93,7 +100,7 @@ class PersonDetector:
                 xyxy = box.xyxy[0].cpu().numpy()
                 conf = float(box.conf[0].cpu().numpy())
                 cls = int(box.cls[0].cpu().numpy())
-                detections.append(Detection(
+                all_detections.append(Detection(
                     x1=float(xyxy[0]),
                     y1=float(xyxy[1]),
                     x2=float(xyxy[2]),
@@ -102,12 +109,37 @@ class PersonDetector:
                     class_id=cls,
                 ))
 
+        # Separate person detections from false-positive object detections
+        person_dets = [d for d in all_detections
+                       if d.class_id == 0 and d.confidence >= PERSON_CONF_THRESHOLD]
+        fp_objects = [d for d in all_detections
+                      if d.class_id in FALSE_POSITIVE_CLASSES]
+
+        # Suppress person detections that overlap with known FP objects
+        if fp_objects and person_dets:
+            clean_persons = []
+            for p in person_dets:
+                suppressed = False
+                for fp in fp_objects:
+                    iou = self._iou(p, fp)
+                    if iou > 0.3:
+                        log.info(
+                            "Suppressed person (conf=%.2f) overlapping with "
+                            "class %d (conf=%.2f, IoU=%.2f) — likely false positive",
+                            p.confidence, fp.class_id, fp.confidence, iou,
+                        )
+                        suppressed = True
+                        break
+                if not suppressed:
+                    clean_persons.append(p)
+            person_dets = clean_persons
+
         # Post-filter: reject tiny boxes and wrong aspect ratios
-        if detections:
+        if person_dets:
             h, w = frame.shape[:2]
             frame_area = float(h * w)
             filtered = []
-            for d in detections:
+            for d in person_dets:
                 box_w = d.x2 - d.x1
                 box_h = d.y2 - d.y1
                 if d.area < frame_area * MIN_BOX_AREA_FRACTION:
@@ -115,6 +147,19 @@ class PersonDetector:
                 if box_h < 1 or (box_h / max(box_w, 1)) < MIN_ASPECT_RATIO:
                     continue
                 filtered.append(d)
-            detections = filtered
+            person_dets = filtered
 
-        return detections
+        return person_dets
+
+    @staticmethod
+    def _iou(a: Detection, b: Detection) -> float:
+        """Compute IoU between two detections."""
+        ix1 = max(a.x1, b.x1)
+        iy1 = max(a.y1, b.y1)
+        ix2 = min(a.x2, b.x2)
+        iy2 = min(a.y2, b.y2)
+        if ix2 <= ix1 or iy2 <= iy1:
+            return 0.0
+        inter = (ix2 - ix1) * (iy2 - iy1)
+        union = a.area + b.area - inter
+        return inter / union if union > 0 else 0.0

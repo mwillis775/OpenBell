@@ -8,15 +8,20 @@ on the local network can view it from a browser without an app.
     http://<server-ip>:5100/stream  → raw MJPEG stream
 """
 
+import json
 import logging
+import os
 import socket
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Thread
+from urllib.parse import unquote
 
 import cv2
 
-from config import WEB_STREAM_PORT
+from config import SNAPSHOT_DIR, WEB_STREAM_PORT
+from recorder import RECORDINGS_DIR, VideoRecorder, get_storage_stats
 from stream import FrameBuffer
 
 log = logging.getLogger("openbell.cv.web")
@@ -53,14 +58,237 @@ _HTML_PAGE = b"""\
 
 class _StreamHandler(BaseHTTPRequestHandler):
     frame_buffer: FrameBuffer  # set on the class before starting
+    recorder: VideoRecorder = None  # set on the class before starting
 
     def do_GET(self):
         if self.path == "/":
             self._serve_page()
         elif self.path == "/stream":
             self._serve_mjpeg()
+        elif self.path == "/media/list":
+            self._serve_media_list()
+        elif self.path == "/snapshots/list":
+            self._serve_snapshot_list()
+        elif self.path.startswith("/snapshots/file/"):
+            self._serve_snapshot_file(self.path[len("/snapshots/file/"):])
+        elif self.path == "/recordings/list":
+            self._serve_recordings_list()
+        elif self.path.startswith("/recordings/file/"):
+            self._serve_recording_file(self.path[len("/recordings/file/"):])
+        elif self.path == "/storage/stats":
+            self._serve_storage_stats()
         else:
             self.send_error(404)
+
+    def do_DELETE(self):
+        if self.path.startswith("/snapshots/file/"):
+            self._delete_snapshot(self.path[len("/snapshots/file/"):])
+        elif self.path.startswith("/recordings/file/"):
+            self._delete_recording(self.path[len("/recordings/file/"):])
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        if self.path == "/recording/start":
+            self._recording_start()
+        elif self.path == "/recording/stop":
+            self._recording_stop()
+        else:
+            self.send_error(404)
+
+    def _recording_start(self):
+        if self.recorder:
+            self.recorder.start_event()
+        self._json_response({"status": "recording"})
+
+    def _recording_stop(self):
+        if self.recorder:
+            self.recorder.stop_event()
+        self._json_response({"status": "stopped"})
+
+    def _json_response(self, data):
+        body = json.dumps(data).encode()
+        self.send_response(200)
+        self._add_cors()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._add_cors()
+        self.end_headers()
+
+    def _add_cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+
+    def _serve_media_list(self):
+        """Return combined JSON list of all snapshots and recordings."""
+        items = []
+        snap_dir = Path(SNAPSHOT_DIR)
+        if snap_dir.is_dir():
+            for f in sorted(snap_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                    st = f.stat()
+                    items.append({
+                        "filename": f.name,
+                        "type": "snapshot",
+                        "size": st.st_size,
+                        "timestamp": int(st.st_mtime * 1000),
+                    })
+        rec_dir = Path(RECORDINGS_DIR)
+        if rec_dir.is_dir():
+            for f in sorted(rec_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.suffix.lower() in (".mp4", ".avi", ".mkv"):
+                    st = f.stat()
+                    items.append({
+                        "filename": f.name,
+                        "type": "recording",
+                        "size": st.st_size,
+                        "timestamp": int(st.st_mtime * 1000),
+                    })
+        # Sort combined list newest-first
+        items.sort(key=lambda x: x["timestamp"], reverse=True)
+        stats = get_storage_stats()
+        body = json.dumps({"media": items, "storage": stats}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self._add_cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _delete_snapshot(self, filename: str):
+        """Delete a snapshot by filename."""
+        safe_name = os.path.basename(unquote(filename))
+        filepath = Path(SNAPSHOT_DIR) / safe_name
+        if not filepath.is_file() or filepath.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+            self.send_error(404, "Snapshot not found")
+            return
+        try:
+            filepath.unlink()
+            log.info("Deleted snapshot: %s", safe_name)
+            body = json.dumps({"deleted": safe_name}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self._add_cors()
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError as e:
+            log.warning("Failed to delete snapshot %s: %s", safe_name, e)
+            self.send_error(500, "Failed to delete")
+
+    def _delete_recording(self, filename: str):
+        """Delete a recording by filename."""
+        safe_name = os.path.basename(unquote(filename))
+        filepath = Path(RECORDINGS_DIR) / safe_name
+        if not filepath.is_file() or filepath.suffix.lower() not in (".mp4", ".avi", ".mkv"):
+            self.send_error(404, "Recording not found")
+            return
+        try:
+            filepath.unlink()
+            log.info("Deleted recording: %s", safe_name)
+            body = json.dumps({"deleted": safe_name}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self._add_cors()
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError as e:
+            log.warning("Failed to delete recording %s: %s", safe_name, e)
+            self.send_error(500, "Failed to delete")
+
+    def _serve_snapshot_list(self):
+        """Return JSON list of snapshot files in the snapshots directory."""
+        snap_dir = Path(SNAPSHOT_DIR)
+        items = []
+        if snap_dir.is_dir():
+            for f in sorted(snap_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.suffix.lower() in (".jpg", ".jpeg", ".png"):
+                    st = f.stat()
+                    items.append({
+                        "filename": f.name,
+                        "type": "snapshot",
+                        "size": st.st_size,
+                        "timestamp": int(st.st_mtime * 1000),
+                    })
+        body = json.dumps({"media": items}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self._add_cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_snapshot_file(self, filename: str):
+        """Serve a single snapshot image by filename."""
+        # URL-decode then sanitize: prevent path traversal
+        safe_name = os.path.basename(unquote(filename))
+        filepath = Path(SNAPSHOT_DIR) / safe_name
+        if not filepath.is_file() or not filepath.suffix.lower() in (".jpg", ".jpeg", ".png"):
+            self.send_error(404, "Snapshot not found")
+            return
+        data = filepath.read_bytes()
+        ctype = "image/jpeg" if filepath.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self._add_cors()
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve_recordings_list(self):
+        """Return JSON list of recording files."""
+        rec_dir = Path(RECORDINGS_DIR)
+        items = []
+        if rec_dir.is_dir():
+            for f in sorted(rec_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.suffix.lower() in (".mp4", ".avi", ".mkv"):
+                    st = f.stat()
+                    items.append({
+                        "filename": f.name,
+                        "type": "recording",
+                        "size": st.st_size,
+                        "timestamp": int(st.st_mtime * 1000),
+                    })
+        body = json.dumps({"media": items}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self._add_cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_recording_file(self, filename: str):
+        """Serve a recording video by filename."""
+        safe_name = os.path.basename(unquote(filename))
+        filepath = Path(RECORDINGS_DIR) / safe_name
+        if not filepath.is_file() or filepath.suffix.lower() not in (".mp4", ".avi", ".mkv"):
+            self.send_error(404, "Recording not found")
+            return
+        data = filepath.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(len(data)))
+        self._add_cors()
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve_storage_stats(self):
+        """Return storage usage statistics."""
+        stats = get_storage_stats()
+        body = json.dumps(stats).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self._add_cors()
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_page(self):
         self.send_response(200)
@@ -105,9 +333,10 @@ class _StreamHandler(BaseHTTPRequestHandler):
         pass
 
 
-def start_web_stream(frame_buffer: FrameBuffer) -> ThreadingHTTPServer:
+def start_web_stream(frame_buffer: FrameBuffer, recorder: VideoRecorder = None) -> ThreadingHTTPServer:
     """Start the MJPEG web server in a daemon thread. Returns the server."""
     _StreamHandler.frame_buffer = frame_buffer
+    _StreamHandler.recorder = recorder
     server = ThreadingHTTPServer(("0.0.0.0", WEB_STREAM_PORT), _StreamHandler)
     server.daemon_threads = True
     thread = Thread(target=server.serve_forever, daemon=True)

@@ -23,6 +23,7 @@ import requests
 
 import config
 from detector import PersonDetector
+from recorder import VideoRecorder, prune_storage
 from recognizer import FaceRecognizer
 from snapshots import save_snapshot
 from static_filter import StaticObjectFilter
@@ -135,11 +136,19 @@ def run_detection_loop():
 
     # Shared frame buffer for the web viewer
     frame_buffer = FrameBuffer()
-    start_web_stream(frame_buffer)
+
+    # Video recorder for event clips
+    recorder = VideoRecorder()
+
+    start_web_stream(frame_buffer, recorder)
 
     # Start background thread to poll CV enabled state
     poller = threading.Thread(target=_poll_cv_enabled, daemon=True)
     poller.start()
+
+    # Periodic storage pruning
+    last_prune = time.time()
+    PRUNE_INTERVAL = 300  # every 5 minutes
 
     reconnect_delay = 3.0  # exponential backoff starting point
 
@@ -168,10 +177,17 @@ def run_detection_loop():
                 if not _running:
                     break
 
-                # Publish every frame to the web viewer
+                # Publish every frame to the web viewer + video recorder
                 frame_buffer.update(frame)
+                recorder.feed_frame(frame)
 
                 now = time.time()
+
+                # Periodic storage pruning
+                if (now - last_prune) > PRUNE_INTERVAL:
+                    last_prune = now
+                    threading.Thread(target=prune_storage, daemon=True).start()
+
                 # Throttle inference to configured interval
                 if (now - last_inference) < config.INFERENCE_INTERVAL:
                     continue
@@ -197,10 +213,10 @@ def run_detection_loop():
                 # Update presence tracker
                 event: Optional[PresenceEvent] = tracker.update(detections, now)
 
-                # Snapshot saving is handled by the phone now — it records
-                # video + thumbnail when it receives PersonDetected events.
-                # We still identify faces for the event payload.
+                # Save snapshots on the PC when a new person is detected
+                snapshot_file = None
                 if tracker.needs_snapshot and detections:
+                    snapshot_file = save_snapshot(frame, detections)
                     tracker.mark_snapshot_saved()
 
                     # Try to identify faces (only on new presence — expensive)
@@ -212,6 +228,10 @@ def run_detection_loop():
                                 event.identities = names
                         except Exception as e:
                             log.debug("Face recognition error: %s", e)
+
+                # Attach snapshot filename to event
+                if event and snapshot_file:
+                    event.snapshot_file = snapshot_file
 
                 # Post event to Rust server if state changed
                 if event:
@@ -238,8 +258,11 @@ def run_detection_loop():
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 1.5, 30.0)
 
+    recorder.stop()
     log.info("CV server stopped.")
 
 
 if __name__ == "__main__":
+    # Initial storage prune on startup
+    prune_storage()
     run_detection_loop()

@@ -96,13 +96,23 @@ def run_conversation():
             transcript = listen_for_speech()
 
             if not transcript:
-                # No speech — play silence response and end
+                # No speech — give a second chance on turn 0, end otherwise
                 log.info("No speech detected (turn %d)", turn + 1)
                 if turn == 0:
-                    audio = tts.speak(responses.RESPONSES[responses.SILENCE],
-                                      cache_key=responses.SILENCE)
+                    # Second chance: prompt and listen once more
+                    nudge = "Hello? Are you still there?"
+                    audio = tts.speak(nudge)
                     sender.send_audio(audio, realtime=True)
-                break
+                    receiver.clear()
+                    transcript = listen_for_speech()
+                    if not transcript:
+                        audio = tts.speak(responses.RESPONSES[responses.SILENCE],
+                                          cache_key=responses.SILENCE)
+                        sender.send_audio(audio, realtime=True)
+                        break
+                    # Fall through to process the transcript
+                else:
+                    break
 
             # 3. Check for police keywords FIRST (safety net — always runs)
             detected_intent = intent_clf.classify(transcript)
@@ -133,12 +143,23 @@ def run_conversation():
                 # LLM returned empty — fall through to keyword response
 
             # Keyword-based fallback
-            if detected_intent in responses.RESPONSES:
+            unknown_count = sum(1 for r, _ in conversation_history if r == "unknown")
+            if detected_intent in responses.RESPONSES and detected_intent != responses.UNKNOWN:
                 resp_text = responses.RESPONSES[detected_intent]
                 audio = tts.speak(resp_text, cache_key=detected_intent)
-            else:
+            elif unknown_count >= 2:
+                # Repeated unknowns — wrap up gracefully
                 resp_text = responses.FOLLOWUP
                 audio = tts.speak(resp_text, cache_key="followup")
+                sender.send_audio(audio, realtime=True)
+                log.info("Too many unknowns — wrapping up")
+                break
+            else:
+                conversation_history.append(("unknown", transcript))
+                resp_text = ("Sorry, I didn't quite catch that. "
+                             "Could you let me know if you're delivering something, "
+                             "or is there something else I can help with?")
+                audio = tts.speak(resp_text)
 
             sender.send_audio(audio, realtime=True)
             log.info("Response sent: %s (%.1fs)",

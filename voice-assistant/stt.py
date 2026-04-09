@@ -57,12 +57,16 @@ def transcribe(audio_f32: np.ndarray, sr: int = 16_000) -> str:
     segments, info = _model.transcribe(
         audio_f32,
         language=config.WHISPER_LANGUAGE,
-        beam_size=3,
+        beam_size=5,
+        best_of=3,
         vad_filter=True,
         vad_parameters=dict(
-            min_silence_duration_ms=600,
-            speech_pad_ms=200,
+            min_silence_duration_ms=500,
+            speech_pad_ms=300,
+            threshold=0.35,
         ),
+        condition_on_previous_text=False,
+        no_speech_threshold=0.5,
     )
 
     text = " ".join(seg.text.strip() for seg in segments).strip()

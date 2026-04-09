@@ -116,9 +116,6 @@ function handleMessage(msg) {
 }
 
 function updateStatus(msg) {
-  if (msg.devices) {
-    updatePhoneMediaUrl(msg.devices);
-  }
   if (msg.stream_url) {
     // Only reset the feed when the stream URL actually changes.
     // Resetting on every status broadcast kills the live MJPEG connection.
@@ -149,8 +146,8 @@ function updateCallState(state, callId) {
       callBanner.className = 'call-banner ringing';
       callBannerText.textContent = '▶ DOORBELL RINGING ◀';
       callActions.innerHTML = `
-        <button class="btn btn-answer" onclick="answerCall()">▶ Answer</button>
-        <button class="btn btn-ignore" onclick="endCall()">✕ Ignore</button>
+        <button class="btn btn-answer">▶ Answer</button>
+        <button class="btn btn-ignore">✕ Ignore</button>
       `;
       document.title = '[!] DOORBELL';
       try { ringSound.play(); } catch(e) {}
@@ -160,7 +157,7 @@ function updateCallState(state, callId) {
       callBanner.className = 'call-banner answered';
       callBannerText.textContent = '● CALL ACTIVE';
       callActions.innerHTML = `
-        <button class="btn btn-hangup" onclick="endCall()">■ Hang Up</button>
+        <button class="btn btn-hangup">■ Hang Up</button>
       `;
       document.title = '[>] In Call...';
       try { ringSound.pause(); ringSound.currentTime = 0; } catch(e) {}
@@ -219,7 +216,7 @@ function onAssistantActivate(msg) {
   callBanner.className = 'call-banner answered';
   callBannerText.textContent = '🤖 VOICE ASSISTANT ACTIVE';
   callActions.innerHTML = `
-    <button class="btn btn-hangup" onclick="endCall()">■ End Session</button>
+    <button class="btn btn-hangup">■ End Session</button>
   `;
   document.title = '[🤖] Assistant Active';
   try { ringSound.pause(); ringSound.currentTime = 0; } catch(e) {}
@@ -398,41 +395,47 @@ if ('Notification' in window && Notification.permission === 'default') {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  MEDIA GALLERY — Browse snapshots & videos stored on phone
+//  MEDIA GALLERY — Browse snapshots & recordings (via CV server)
 // ═══════════════════════════════════════════════════════════
 
-let phoneMediaUrl = null;   // e.g. "http://192.168.1.50:8080/media"
+const CV_BASE = 'http://localhost:5100';
 let galleryOpen = false;
 let galleryRefreshTimer = null;
+let galleryFilter = 'all'; // 'all', 'snapshot', 'recording'
+let gallerySearchQuery = '';
+let gallerySelectMode = false;
+let gallerySelection = new Set(); // filenames
+let galleryItems = []; // all fetched items
+let galleryFiltered = []; // items after filter + search
+let lightboxIndex = -1; // current index in galleryFiltered
 
 const galleryOverlay = document.getElementById('galleryOverlay');
 const galleryGrid = document.getElementById('galleryGrid');
+const galleryBody = document.getElementById('galleryBody');
 const galleryStatus = document.getElementById('galleryStatus');
+const galleryStorage = document.getElementById('galleryStorage');
+const galleryEmpty = document.getElementById('galleryEmpty');
+const gallerySearchInput = document.getElementById('gallerySearch');
 const lightbox = document.getElementById('lightbox');
 const lightboxContent = document.getElementById('lightboxContent');
 const lightboxInfo = document.getElementById('lightboxInfo');
-
-/**
- * Derive the phone's media URL from the devices list in a status message.
- * The phone's embedded HTTP server runs on port 8080.
- */
-function updatePhoneMediaUrl(devices) {
-  if (!devices) return;
-  const entries = typeof devices === 'object' ? Object.values(devices) : [];
-  const phone = entries.find(d => d.device_type === 'doorbell');
-  if (phone && phone.device_ip) {
-    phoneMediaUrl = `http://${phone.device_ip}:8080/media`;
-  }
-}
+const lightboxCounter = document.getElementById('lightboxCounter');
+const deleteDialog = document.getElementById('deleteDialog');
+const deleteDialogMsg = document.getElementById('deleteDialogMsg');
+const btnDeleteSelected = document.getElementById('btnDeleteSelected');
+const btnSelectMode = document.getElementById('btnSelectMode');
 
 function openGallery() {
   galleryOverlay.classList.add('active');
   galleryOpen = true;
+  gallerySearchInput.value = '';
+  gallerySearchQuery = '';
+  gallerySelection.clear();
+  gallerySelectMode = false;
+  updateSelectModeUI();
   refreshGallery();
-  // Auto-refresh every 30 seconds while open
   galleryRefreshTimer = setInterval(refreshGallery, 30000);
 }
-window.openGallery = openGallery;
 
 function closeGallery() {
   galleryOverlay.classList.remove('active');
@@ -440,120 +443,383 @@ function closeGallery() {
   clearInterval(galleryRefreshTimer);
   galleryRefreshTimer = null;
 }
-window.closeGallery = closeGallery;
 
 async function refreshGallery() {
-  if (!phoneMediaUrl) {
-    galleryStatus.textContent = '[ no phone connected — media unavailable ]';
-    galleryGrid.innerHTML = '';
-    return;
-  }
-
   galleryStatus.textContent = '[ loading... ]';
 
   try {
-    const resp = await fetch(phoneMediaUrl + '/list', { signal: AbortSignal.timeout(5000) });
+    const resp = await fetch(CV_BASE + '/media/list', { signal: AbortSignal.timeout(5000) });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    const items = data.media || [];
+    galleryItems = data.media || [];
 
-    if (items.length === 0) {
-      galleryStatus.textContent = '[ no recordings yet ]';
-      galleryGrid.innerHTML = '';
-      return;
-    }
+    if (data.storage) renderStorageStats(data.storage);
 
-    galleryStatus.textContent = `[ ${items.length} file(s) ]`;
-    renderGallery(items);
+    applyFilters();
   } catch (e) {
     console.warn('Gallery fetch failed:', e.message);
-    galleryStatus.textContent = '[ failed to load — phone may be offline ]';
+    galleryStatus.textContent = '[ failed to load — CV server may be offline ]';
   }
 }
-window.refreshGallery = refreshGallery;
+
+function applyFilters() {
+  const q = gallerySearchQuery.toLowerCase();
+  galleryFiltered = galleryItems.filter(item => {
+    if (galleryFilter !== 'all' && item.type !== galleryFilter) return false;
+    if (q && !item.filename.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const snapCount = galleryItems.filter(i => i.type === 'snapshot').length;
+  const recCount = galleryItems.filter(i => i.type === 'recording').length;
+
+  let statusParts = [];
+  if (galleryFilter === 'all') {
+    statusParts.push(`${galleryFiltered.length} item(s)`);
+    if (snapCount > 0) statusParts.push(`${snapCount} snapshots`);
+    if (recCount > 0) statusParts.push(`${recCount} recordings`);
+  } else {
+    statusParts.push(`${galleryFiltered.length} ${galleryFilter}(s)`);
+  }
+  if (q) statusParts.push(`matching "${gallerySearchQuery}"`);
+  galleryStatus.textContent = `[ ${statusParts.join(' · ')} ]`;
+
+  // Update tab counts
+  document.querySelectorAll('.gallery-tab').forEach(tab => {
+    const f = tab.dataset.filter;
+    if (f === 'all') {
+      tab.textContent = `All (${galleryItems.length})`;
+    } else if (f === 'snapshot') {
+      tab.textContent = `Snapshots (${snapCount})`;
+    } else if (f === 'recording') {
+      tab.textContent = `Recordings (${recCount})`;
+    }
+  });
+
+  renderGallery(galleryFiltered);
+}
+
+function renderStorageStats(stats) {
+  const snapMB = stats.snapshots_mb || 0;
+  const recMB = stats.recordings_mb || 0;
+  const snapMax = stats.snapshots_limit_mb || 100;
+  const recMax = stats.recordings_limit_mb || 500;
+  const snapPct = Math.min(100, (snapMB / snapMax) * 100);
+  const recPct = Math.min(100, (recMB / recMax) * 100);
+
+  function barClass(pct) {
+    if (pct > 90) return 'critical';
+    if (pct > 70) return 'warn';
+    return '';
+  }
+
+  galleryStorage.innerHTML = `
+    <span class="storage-item">
+      snapshots: ${snapMB.toFixed(1)}/${snapMax} MB
+      <span class="storage-bar"><span class="storage-bar-fill ${barClass(snapPct)}" style="width:${snapPct}%"></span></span>
+    </span>
+    <span class="storage-item">
+      recordings: ${recMB.toFixed(1)}/${recMax} MB
+      <span class="storage-bar"><span class="storage-bar-fill ${barClass(recPct)}" style="width:${recPct}%"></span></span>
+    </span>
+  `;
+}
 
 function renderGallery(items) {
-  galleryGrid.innerHTML = '';
+  // Group by date
+  const groups = new Map();
   for (const item of items) {
-    const card = document.createElement('div');
-    card.className = `gallery-card ${item.type}`;
+    const d = new Date(item.timestamp);
+    const key = d.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
 
-    const thumbUrl = item.type === 'video' && item.thumbnail
-      ? `${phoneMediaUrl}/file/${item.thumbnail}`
-      : item.type === 'snapshot'
-        ? `${phoneMediaUrl}/file/${item.filename}`
-        : null;
+  // Clear existing content from parent (galleryBody contains both grid wrapper and empty state)
+  // We rebuild the grid content inside galleryBody
+  const bodyEl = galleryBody;
+  // Remove old date groups
+  bodyEl.querySelectorAll('.gallery-date-group').forEach(el => el.remove());
+  galleryGrid.innerHTML = '';
+  galleryGrid.style.display = 'none';
 
-    const date = new Date(item.timestamp).toLocaleString();
-    const sizeKB = (item.size / 1024).toFixed(0);
-    const sizeLabel = item.size > 1048576
-      ? (item.size / 1048576).toFixed(1) + ' MB'
-      : sizeKB + ' KB';
-    const typeIcon = item.type === 'video' ? '▶' : '◉';
+  if (items.length === 0) {
+    galleryEmpty.style.display = 'flex';
+    return;
+  }
 
-    card.innerHTML = `
-      <div class="gallery-thumb" onclick="openMedia('${item.filename}', '${item.type}')">
-        ${thumbUrl
-          ? `<img src="${thumbUrl}" alt="${item.filename}" loading="lazy">`
-          : `<div class="gallery-no-thumb">${typeIcon}</div>`}
-        <span class="gallery-type-badge">${typeIcon} ${item.type}</span>
-      </div>
-      <div class="gallery-meta">
-        <div class="gallery-date">${date}</div>
-        <div class="gallery-size">${sizeLabel}</div>
-      </div>
-      <button class="gallery-delete" onclick="deleteMedia('${item.filename}')">✕</button>
+  galleryEmpty.style.display = 'none';
+
+  for (const [dateLabel, dateItems] of groups) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'gallery-date-group';
+
+    const headerEl = document.createElement('div');
+    headerEl.className = 'gallery-date-header';
+    headerEl.innerHTML = `
+      <span>${dateLabel}</span>
+      <span class="gallery-date-count">${dateItems.length} item(s)</span>
     `;
-    galleryGrid.appendChild(card);
+    groupEl.appendChild(headerEl);
+
+    const gridEl = document.createElement('div');
+    gridEl.className = 'gallery-grid';
+
+    for (const item of dateItems) {
+      const card = createGalleryCard(item);
+      gridEl.appendChild(card);
+    }
+
+    groupEl.appendChild(gridEl);
+    bodyEl.appendChild(groupEl);
   }
 }
 
-function openMedia(filename, type) {
-  const url = `${phoneMediaUrl}/file/${filename}`;
+function createGalleryCard(item) {
+  const card = document.createElement('div');
+  const isRecording = item.type === 'recording';
+  card.className = `gallery-card ${item.type}`;
+  if (gallerySelection.has(item.filename)) card.classList.add('selected');
+  card.dataset.filename = item.filename;
+  card.dataset.type = item.type;
+
+  const time = new Date(item.timestamp).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const sizeLabel = item.size > 1048576
+    ? (item.size / 1048576).toFixed(1) + ' MB'
+    : (item.size / 1024).toFixed(0) + ' KB';
+
+  const badge = isRecording ? '▶ recording' : '◉ snapshot';
+
+  let thumbHtml;
+  if (isRecording) {
+    // Video thumbnail: use first frame via video element or show icon
+    thumbHtml = `
+      <div class="gallery-thumb">
+        <div class="gallery-no-thumb">▶</div>
+        <div class="gallery-play-icon"></div>
+        <span class="gallery-type-badge">${badge}</span>
+      </div>
+    `;
+  } else {
+    const thumbUrl = `${CV_BASE}/snapshots/file/${encodeURIComponent(item.filename)}`;
+    thumbHtml = `
+      <div class="gallery-thumb">
+        <img src="${thumbUrl}" alt="${item.filename}" loading="lazy">
+        <span class="gallery-type-badge">${badge}</span>
+      </div>
+    `;
+  }
+
+  card.innerHTML = `
+    ${thumbHtml}
+    <button class="gallery-delete" title="Delete">✕</button>
+    <div class="gallery-meta">
+      <div class="gallery-date">${time}</div>
+      <div class="gallery-size">${sizeLabel}</div>
+    </div>
+  `;
+
+  return card;
+}
+
+// ── Lightbox ──
+function openLightbox(index) {
+  if (index < 0 || index >= galleryFiltered.length) return;
+  lightboxIndex = index;
+  const item = galleryFiltered[index];
+  const isRecording = item.type === 'recording';
+  const endpoint = isRecording ? 'recordings' : 'snapshots';
+  const url = `${CV_BASE}/${endpoint}/file/${encodeURIComponent(item.filename)}`;
+
   lightbox.classList.add('active');
 
-  if (type === 'video') {
+  if (isRecording) {
     lightboxContent.innerHTML = `
-      <video controls autoplay class="lightbox-video">
+      <video class="lightbox-video" controls autoplay>
         <source src="${url}" type="video/mp4">
       </video>
     `;
   } else {
-    lightboxContent.innerHTML = `<img src="${url}" class="lightbox-image" alt="${filename}">`;
+    lightboxContent.innerHTML = `<img src="${url}" class="lightbox-image" alt="${item.filename}">`;
   }
 
-  lightboxInfo.textContent = `${filename}`;
-}
-window.openMedia = openMedia;
+  const date = new Date(item.timestamp).toLocaleString();
+  const sizeLabel = item.size > 1048576
+    ? (item.size / 1048576).toFixed(1) + ' MB'
+    : (item.size / 1024).toFixed(0) + ' KB';
+  lightboxInfo.textContent = `${item.filename} · ${date} · ${sizeLabel}`;
+  lightboxCounter.textContent = `${index + 1} / ${galleryFiltered.length}`;
 
-function closeLightbox(event) {
-  if (event && event.target !== lightbox) return;
+  updateLightboxNav();
+}
+
+function updateLightboxNav() {
+  document.getElementById('btnLightboxPrev').disabled = lightboxIndex <= 0;
+  document.getElementById('btnLightboxNext').disabled = lightboxIndex >= galleryFiltered.length - 1;
+}
+
+function lightboxPrev() {
+  if (lightboxIndex > 0) openLightbox(lightboxIndex - 1);
+}
+
+function lightboxNext() {
+  if (lightboxIndex < galleryFiltered.length - 1) openLightbox(lightboxIndex + 1);
+}
+
+function closeLightbox() {
   lightbox.classList.remove('active');
-  // Stop any playing video
   const video = lightboxContent.querySelector('video');
   if (video) video.pause();
   lightboxContent.innerHTML = '';
+  lightboxIndex = -1;
 }
-window.closeLightbox = closeLightbox;
 
-async function deleteMedia(filename) {
-  if (!phoneMediaUrl) return;
+function lightboxDownload() {
+  if (lightboxIndex < 0 || lightboxIndex >= galleryFiltered.length) return;
+  const item = galleryFiltered[lightboxIndex];
+  const endpoint = item.type === 'recording' ? 'recordings' : 'snapshots';
+  const url = `${CV_BASE}/${endpoint}/file/${encodeURIComponent(item.filename)}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = item.filename;
+  a.click();
+}
+
+// ── Select mode ──
+function toggleSelectMode() {
+  gallerySelectMode = !gallerySelectMode;
+  gallerySelection.clear();
+  updateSelectModeUI();
+  // Re-render to add/remove checkmarks
+  applyFilters();
+}
+
+function updateSelectModeUI() {
+  btnSelectMode.classList.toggle('active', gallerySelectMode);
+  btnSelectMode.textContent = gallerySelectMode ? '☑ Selecting' : '☐ Select';
+  btnDeleteSelected.style.display = gallerySelectMode && gallerySelection.size > 0 ? '' : 'none';
+  if (gallerySelection.size > 0) {
+    btnDeleteSelected.textContent = `✕ Delete (${gallerySelection.size})`;
+  }
+}
+
+// ── Delete helpers ──
+let pendingDeleteResolve = null;
+
+function showDeleteConfirm(message) {
+  return new Promise(resolve => {
+    pendingDeleteResolve = resolve;
+    deleteDialogMsg.textContent = message;
+    deleteDialog.classList.add('active');
+  });
+}
+
+function hideDeleteDialog() {
+  deleteDialog.classList.remove('active');
+  if (pendingDeleteResolve) {
+    pendingDeleteResolve(false);
+    pendingDeleteResolve = null;
+  }
+}
+
+async function deleteMedia(filename, type) {
+  const endpoint = type === 'recording' ? 'recordings' : 'snapshots';
+  const resp = await fetch(`${CV_BASE}/${endpoint}/file/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+    signal: AbortSignal.timeout(5000),
+  });
+  return resp.ok;
+}
+
+async function deleteSingleItem(filename, type) {
+  const confirmed = await showDeleteConfirm(`Are you sure you want to delete "${filename}"?`);
+  if (!confirmed) return;
   try {
-    await fetch(`${phoneMediaUrl}/delete/${filename}`, { method: 'POST' });
-    refreshGallery();
+    const ok = await deleteMedia(filename, type);
+    if (ok) {
+      galleryItems = galleryItems.filter(i => i.filename !== filename);
+      gallerySelection.delete(filename);
+      // If in lightbox, move to next or close
+      if (lightbox.classList.contains('active')) {
+        if (galleryFiltered.length <= 1) {
+          closeLightbox();
+        } else if (lightboxIndex >= galleryFiltered.length - 1) {
+          // was last item
+        }
+      }
+      applyFilters();
+      // Re-open lightbox at same position if still open
+      if (lightbox.classList.contains('active') && galleryFiltered.length > 0) {
+        const newIdx = Math.min(lightboxIndex, galleryFiltered.length - 1);
+        openLightbox(newIdx);
+      } else {
+        closeLightbox();
+      }
+    }
   } catch (e) {
     console.warn('Delete failed:', e.message);
   }
 }
-window.deleteMedia = deleteMedia;
 
-// Close gallery on Escape
+async function deleteSelectedItems() {
+  if (gallerySelection.size === 0) return;
+  const count = gallerySelection.size;
+  const confirmed = await showDeleteConfirm(`Delete ${count} selected item(s)? This cannot be undone.`);
+  if (!confirmed) return;
+
+  let deleted = 0;
+  for (const filename of [...gallerySelection]) {
+    const item = galleryItems.find(i => i.filename === filename);
+    if (!item) continue;
+    try {
+      const ok = await deleteMedia(filename, item.type);
+      if (ok) {
+        deleted++;
+        galleryItems = galleryItems.filter(i => i.filename !== filename);
+        gallerySelection.delete(filename);
+      }
+    } catch (e) {
+      console.warn(`Failed to delete ${filename}:`, e.message);
+    }
+  }
+  gallerySelectMode = false;
+  updateSelectModeUI();
+  applyFilters();
+}
+
+// ── Keyboard navigation ──
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (lightbox.classList.contains('active')) {
+    if (deleteDialog.classList.contains('active')) {
+      hideDeleteDialog();
+    } else if (lightbox.classList.contains('active')) {
       closeLightbox();
     } else if (galleryOpen) {
       closeGallery();
+    }
+    return;
+  }
+
+  // Lightbox navigation
+  if (lightbox.classList.contains('active')) {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      lightboxPrev();
+    } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      lightboxNext();
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      const item = galleryFiltered[lightboxIndex];
+      if (item) deleteSingleItem(item.filename, item.type);
+    }
+    return;
+  }
+
+  // Gallery search focus
+  if (galleryOpen && !lightbox.classList.contains('active')) {
+    if (e.key === '/' && document.activeElement !== gallerySearchInput) {
+      e.preventDefault();
+      gallerySearchInput.focus();
     }
   }
 });
@@ -637,8 +903,6 @@ function toggleLayoutLock() {
     saveLayout();
   }
 }
-// Make globally accessible for onclick
-window.toggleLayoutLock = toggleLayoutLock;
 
 // ── Drag Logic ──
 let dragPanel = null, dragStartX = 0, dragStartY = 0, dragOrigLeft = 0, dragOrigTop = 0;
@@ -813,3 +1077,109 @@ canvas.addEventListener('dblclick', (e) => {
   const saved = loadLayout();
   applyLayout(saved || DEFAULT_LAYOUT);
 })();
+
+// ═══════════════════════════════════════════════════════════
+//  EVENT BINDINGS — No inline handlers (CSP-safe)
+// ═══════════════════════════════════════════════════════════
+
+document.getElementById('btnGallery').addEventListener('click', () => openGallery());
+document.getElementById('btnLock').addEventListener('click', () => toggleLayoutLock());
+document.getElementById('btnPhoneAudio').addEventListener('click', () => togglePhoneAudio());
+document.getElementById('btnCv').addEventListener('click', () => toggleCv());
+
+// Intercom push-to-talk
+btnIntercom.addEventListener('mousedown', () => intercomDown());
+btnIntercom.addEventListener('mouseup', () => intercomUp());
+btnIntercom.addEventListener('touchstart', (e) => { e.preventDefault(); intercomDown(); });
+btnIntercom.addEventListener('touchend', (e) => { e.preventDefault(); intercomUp(); });
+
+// Call actions — event delegation for dynamically created buttons
+callActions.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  if (btn.classList.contains('btn-answer')) answerCall();
+  else if (btn.classList.contains('btn-ignore') || btn.classList.contains('btn-hangup')) endCall();
+});
+
+// Gallery controls
+document.getElementById('btnGalleryRefresh').addEventListener('click', () => refreshGallery());
+document.getElementById('btnGalleryClose').addEventListener('click', () => closeGallery());
+
+// Gallery tabs
+document.querySelectorAll('.gallery-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.gallery-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    galleryFilter = tab.dataset.filter;
+    applyFilters();
+  });
+});
+
+// Gallery search
+gallerySearchInput.addEventListener('input', (e) => {
+  gallerySearchQuery = e.target.value;
+  applyFilters();
+});
+
+// Gallery select mode
+btnSelectMode.addEventListener('click', () => toggleSelectMode());
+btnDeleteSelected.addEventListener('click', () => deleteSelectedItems());
+
+// Lightbox
+lightbox.addEventListener('click', (e) => {
+  if (e.target === lightbox || e.target.classList.contains('lightbox-stage')) closeLightbox();
+});
+document.getElementById('btnLightboxClose').addEventListener('click', () => closeLightbox());
+document.getElementById('btnLightboxPrev').addEventListener('click', () => lightboxPrev());
+document.getElementById('btnLightboxNext').addEventListener('click', () => lightboxNext());
+document.getElementById('btnLightboxDownload').addEventListener('click', () => lightboxDownload());
+document.getElementById('btnLightboxDelete').addEventListener('click', () => {
+  const item = galleryFiltered[lightboxIndex];
+  if (item) deleteSingleItem(item.filename, item.type);
+});
+
+// Delete dialog
+document.getElementById('btnDeleteCancel').addEventListener('click', () => hideDeleteDialog());
+document.getElementById('btnDeleteConfirm').addEventListener('click', () => {
+  if (pendingDeleteResolve) {
+    const resolve = pendingDeleteResolve;
+    pendingDeleteResolve = null;
+    deleteDialog.classList.remove('active');
+    resolve(true);
+  }
+});
+
+// Gallery grid — event delegation for cards, delete buttons, selection
+galleryBody.addEventListener('click', (e) => {
+  // Delete button
+  const delBtn = e.target.closest('.gallery-delete');
+  if (delBtn) {
+    e.stopPropagation();
+    const card = delBtn.closest('.gallery-card');
+    if (card) deleteSingleItem(card.dataset.filename, card.dataset.type);
+    return;
+  }
+
+  // Card click
+  const card = e.target.closest('.gallery-card');
+  if (!card) return;
+
+  if (gallerySelectMode) {
+    // Toggle selection
+    const fn = card.dataset.filename;
+    if (gallerySelection.has(fn)) {
+      gallerySelection.delete(fn);
+      card.classList.remove('selected');
+    } else {
+      gallerySelection.add(fn);
+      card.classList.add('selected');
+    }
+    updateSelectModeUI();
+    return;
+  }
+
+  // Open in lightbox — find index in filtered list
+  const fn = card.dataset.filename;
+  const idx = galleryFiltered.findIndex(i => i.filename === fn);
+  if (idx >= 0) openLightbox(idx);
+});

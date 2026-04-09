@@ -35,6 +35,9 @@ pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: u16 = 1;
 pub const BITS_PER_SAMPLE: u16 = 16;
 
+/// GP104 HDA PipeWire sink name — used for both phone→speaker and doorbell chime
+const DOORBELL_SINK: &str = "alsa_output.pci-0000_01_00.1.hdmi-stereo";
+
 pub struct AudioManager {
     _outgoing_socket: Arc<UdpSocket>,
 }
@@ -135,16 +138,28 @@ async fn phone_to_speakers(
             Ok(mut child) => {
                 let mut stdin = child.stdin.take().expect("pw-cat stdin");
                 info!("Speaker output: pw-cat --playback started (PipeWire)");
+                info!("Waiting for phone audio on UDP :5003 ...");
 
                 let mut buf = [0u8; 2048];
                 let mut total: u64 = 0;
                 let mut count: u64 = 0;
+                let mut first_packet = true;
+                let mut last_log = std::time::Instant::now();
                 // Static silence buffer for mute mode
                 let zeros = [0u8; 2048];
 
                 loop {
-                    match socket.recv_from(&mut buf).await {
-                        Ok((len, _addr)) => {
+                    // Use a timeout so we can log "still waiting" periodically
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        socket.recv_from(&mut buf),
+                    ).await {
+                        Ok(Ok((len, addr))) => {
+                            if first_packet {
+                                info!("First phone audio packet from {} ({} bytes)", addr, len);
+                                first_packet = false;
+                            }
+
                             if len <= HEADER_SIZE {
                                 continue;
                             }
@@ -201,9 +216,18 @@ async fn phone_to_speakers(
                                     .await;
                             }
                         }
-                        Err(e) => {
+                        Ok(Err(e)) => {
                             warn!("Phone audio recv error: {}", e);
                             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
+                        Err(_timeout) => {
+                            // No audio packets received in 30s
+                            if count == 0 {
+                                info!("Still waiting for phone audio on UDP :5003 (no packets yet)");
+                            } else if last_log.elapsed().as_secs() >= 60 {
+                                info!("Phone audio stalled — {} packets received so far, last 30s silent", count);
+                                last_log = std::time::Instant::now();
+                            }
                         }
                     }
                 }
@@ -223,6 +247,8 @@ fn spawn_speaker_process() -> Result<Child, std::io::Error> {
     Command::new("pw-cat")
         .args([
             "--playback",
+            "--target",
+            DOORBELL_SINK,
             "--raw",
             "--format",
             "s16",
@@ -399,9 +425,6 @@ async fn assistant_to_phone(
 // ═══════════════════════════════════════════════════════════════
 //  Doorbell chime — plays WAV through GP104 HDMI speakers
 // ═══════════════════════════════════════════════════════════════
-
-/// GP104 HDA PipeWire sink name
-const DOORBELL_SINK: &str = "alsa_output.pci-0000_01_00.1.hdmi-stereo";
 
 /// Path to the bundled doorbell WAV (relative to the server binary's cwd)
 const DOORBELL_WAV: &str = "assets/doorbell.wav";

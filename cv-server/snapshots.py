@@ -2,6 +2,7 @@
 OpenBell CV Server — Snapshot manager
 
 Saves annotated detection frames to disk and prunes old ones.
+Includes a cooldown to avoid excessive snapshots of the same scene.
 """
 
 import logging
@@ -21,6 +22,11 @@ log = logging.getLogger("openbell.cv.snapshots")
 # Ensure snapshot directory exists
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
+# ── Snapshot cooldown ──
+# Minimum seconds between snapshots (avoids 10 snapshots of stepdad mowing)
+SNAPSHOT_COOLDOWN_SECS = float(os.environ.get("OPENBELL_SNAPSHOT_COOLDOWN", "300"))  # 5 min default
+_last_snapshot_time: float = 0.0
+
 
 def draw_detections(frame: np.ndarray, detections: List[Detection]) -> np.ndarray:
     """Draw bounding boxes on a copy of the frame."""
@@ -38,14 +44,25 @@ def draw_detections(frame: np.ndarray, detections: List[Detection]) -> np.ndarra
 
 
 def save_snapshot(frame: np.ndarray, detections: List[Detection]) -> str:
-    """Save an annotated snapshot, return the filename."""
+    """Save an annotated snapshot, return the filename. Returns '' if cooldown active."""
+    global _last_snapshot_time
+
+    now = time.time()
+    elapsed = now - _last_snapshot_time
+    if _last_snapshot_time > 0 and elapsed < SNAPSHOT_COOLDOWN_SECS:
+        log.debug("Snapshot cooldown active (%.0fs remaining)",
+                  SNAPSHOT_COOLDOWN_SECS - elapsed)
+        return ""
+
     annotated = draw_detections(frame, detections)
     ts = time.strftime("%Y%m%d_%H%M%S")
     filename = f"person_{ts}.jpg"
     filepath = os.path.join(SNAPSHOT_DIR, filename)
 
     cv2.imwrite(filepath, annotated, [cv2.IMWRITE_JPEG_QUALITY, SNAPSHOT_QUALITY])
-    log.info("Snapshot saved: %s (%d detections)", filename, len(detections))
+    _last_snapshot_time = now
+    log.info("Snapshot saved: %s (%d detections, next in %.0fs)",
+             filename, len(detections), SNAPSHOT_COOLDOWN_SECS)
 
     prune_old_snapshots()
     return filename

@@ -359,6 +359,8 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
             audio::play_doorbell_chime();
             // Trigger the physical doorbell relay (if configured)
             crate::relay::trigger_physical_doorbell();
+            // Start video recording on CV server
+            notify_cv_recording(true);
             // The ring() already broadcasts CallState::Ringing
             info!("Call {} started — ringing", call_id);
 
@@ -417,6 +419,8 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
             ws.audio.stop_capture();
             *state.intercom_active.write() = false;
             state.assistant_active.store(false, Ordering::Relaxed);
+            // Stop video recording on CV server
+            notify_cv_recording(false);
             if let Some(record) = state.end_call() {
                 info!(
                     "Call {} ended — duration {:.1}s, answered={}",
@@ -568,5 +572,27 @@ fn activate_assistant(ws: &WsState) {
     // Notify voice assistant + dashboards
     let _ = state.broadcast_tx.send(ServerMessage::AssistantActivate {
         timestamp: AppState::now_secs(),
+    });
+}
+
+// ── CV server recording control ──
+
+/// Tell the CV server to start or stop video recording.
+fn notify_cv_recording(start: bool) {
+    let endpoint = if start { "start" } else { "stop" };
+    let url = format!("http://localhost:5100/recording/{}", endpoint);
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        match client.post(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                info!("CV recording {}", endpoint);
+            }
+            Ok(resp) => {
+                warn!("CV recording {} returned {}", endpoint, resp.status());
+            }
+            Err(e) => {
+                warn!("Failed to notify CV recording {}: {}", endpoint, e);
+            }
+        }
     });
 }

@@ -27,9 +27,9 @@ RUST_SEND_TARGET = (RUST_SEND_HOST, ASSISTANT_SEND_PORT)   # Where Rust listens 
 # The Rust server forwards from 5005 → phone.
 
 # ── Whisper STT ──
-WHISPER_MODEL = os.environ.get("OPENBELL_WHISPER_MODEL", "base")
-WHISPER_DEVICE = os.environ.get("OPENBELL_WHISPER_DEVICE", "cpu")
-WHISPER_COMPUTE = os.environ.get("OPENBELL_WHISPER_COMPUTE", "int8")
+WHISPER_MODEL = os.environ.get("OPENBELL_WHISPER_MODEL", "small")
+WHISPER_DEVICE = os.environ.get("OPENBELL_WHISPER_DEVICE", "cuda")
+WHISPER_COMPUTE = os.environ.get("OPENBELL_WHISPER_COMPUTE", "float16")
 WHISPER_LANGUAGE = "en"
 
 # ── Piper TTS ──
@@ -43,15 +43,15 @@ TTS_CACHE_DIR = os.environ.get(
 
 # ── Conversation ──
 AUTO_ANSWER_TIMEOUT = int(os.environ.get("OPENBELL_AUTO_ANSWER_SECS", "5"))
-LISTEN_TIMEOUT = float(os.environ.get("OPENBELL_LISTEN_TIMEOUT", "8.0"))
-SILENCE_THRESHOLD = float(os.environ.get("OPENBELL_SILENCE_THRESHOLD", "0.02"))
-SILENCE_DURATION = float(os.environ.get("OPENBELL_SILENCE_DURATION", "2.0"))
-MAX_TURNS = int(os.environ.get("OPENBELL_MAX_TURNS", "5"))
-MAX_SESSION_SECS = float(os.environ.get("OPENBELL_MAX_SESSION", "120.0"))
+LISTEN_TIMEOUT = float(os.environ.get("OPENBELL_LISTEN_TIMEOUT", "10.0"))
+SILENCE_THRESHOLD = float(os.environ.get("OPENBELL_SILENCE_THRESHOLD", "0.015"))
+SILENCE_DURATION = float(os.environ.get("OPENBELL_SILENCE_DURATION", "1.5"))
+MAX_TURNS = int(os.environ.get("OPENBELL_MAX_TURNS", "8"))
+MAX_SESSION_SECS = float(os.environ.get("OPENBELL_MAX_SESSION", "180.0"))
 
 # ── LLM Chat (optional — enables free-form conversation) ──
 # Path to a GGUF model file.  Leave empty to use keyword-based responses.
 LLM_MODEL_PATH = os.environ.get("OPENBELL_LLM_MODEL", "")
-LLM_CONTEXT_SIZE = int(os.environ.get("OPENBELL_LLM_CONTEXT", "2048"))
-LLM_GPU_LAYERS = int(os.environ.get("OPENBELL_LLM_GPU_LAYERS", "0"))
-LLM_MAX_TOKENS = int(os.environ.get("OPENBELL_LLM_MAX_TOKENS", "100"))
+LLM_CONTEXT_SIZE = int(os.environ.get("OPENBELL_LLM_CONTEXT", "4096"))
+LLM_GPU_LAYERS = int(os.environ.get("OPENBELL_LLM_GPU_LAYERS", "99"))
+LLM_MAX_TOKENS = int(os.environ.get("OPENBELL_LLM_MAX_TOKENS", "80"))

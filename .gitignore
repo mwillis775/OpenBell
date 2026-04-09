@@ -10,7 +10,7 @@ android-app/local.properties
 *.aab
 *.keystore
 
-# Node / Electron
+# Node (legacy Electron app)
 electron-app/node_modules/
 electron-app/dist/
 electron-app/out/
@@ -33,6 +33,9 @@ Thumbs.db
 
 # YOLOv8 model (large binary)
 *.pt
+
+# LLM models (large binaries)
+*.gguf
 
 # Recordings and snapshots (user data)
 recordings/
