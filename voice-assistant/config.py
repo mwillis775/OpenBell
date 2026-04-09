@@ -29,7 +29,7 @@ RUST_SEND_TARGET = (RUST_SEND_HOST, ASSISTANT_SEND_PORT)   # Where Rust listens 
 # ── Whisper STT ──
 WHISPER_MODEL = os.environ.get("OPENBELL_WHISPER_MODEL", "small")
 WHISPER_DEVICE = os.environ.get("OPENBELL_WHISPER_DEVICE", "cuda")
-WHISPER_COMPUTE = os.environ.get("OPENBELL_WHISPER_COMPUTE", "float16")
+WHISPER_COMPUTE = os.environ.get("OPENBELL_WHISPER_COMPUTE", "int8_float32")
 WHISPER_LANGUAGE = "en"
 
 # ── Piper TTS ──
