@@ -273,6 +273,8 @@ body::after {
   object-fit: contain;
   display: block;
   filter: brightness(1.05);
+  /* Phone sensor is landscape; rotate for portrait-mounted doorbell */
+  transform: rotate(-90deg);
 }
 .no-feed {
   display: flex;
