@@ -27,6 +27,8 @@ fn server_port() -> u16 {
         .unwrap_or(5000)
 }
 
+pub const SERVER_PORT: u16 = 5000;
+
 #[tokio::main]
 async fn main() {
     // Initialize logging

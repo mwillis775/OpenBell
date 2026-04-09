@@ -1,7 +1,7 @@
 // OpenBell Dashboard — Renderer
 // Connects to Rust server via WebSocket
 
-const SERVER_URL = window.electronAPI?.serverWsUrl || 'ws://localhost:5000/ws';
+const SERVER_URL = 'ws://localhost:5000/ws';
 let ws = null;
 let callState = 'idle';
 let reconnectTimer = null;
@@ -392,6 +392,11 @@ function addEvent(type, timestamp, detail) {
 // ── Init ──
 connect();
 
+// Request notification permission on load
+if ('Notification' in window && Notification.permission === 'default') {
+  Notification.requestPermission();
+}
+
 // ═══════════════════════════════════════════════════════════
 //  MEDIA GALLERY — Browse snapshots & videos stored on phone
 // ═══════════════════════════════════════════════════════════
@@ -517,7 +522,6 @@ function openMedia(filename, type) {
     lightboxContent.innerHTML = `<img src="${url}" class="lightbox-image" alt="${filename}">`;
   }
 
-  const date = filename.replace(/^(snap_|video_)/, '').replace(/\.(jpg|mp4)$/, '');
   lightboxInfo.textContent = `${filename}`;
 }
 window.openMedia = openMedia;

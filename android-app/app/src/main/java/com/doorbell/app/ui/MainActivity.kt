@@ -30,6 +30,7 @@ import com.doorbell.app.network.ServerRegistration
 import com.doorbell.app.receiver.DoorbellDeviceAdmin
 import com.doorbell.app.service.AudioStreamService
 import com.doorbell.app.service.CameraStreamService
+import com.google.gson.JsonObject
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.text.SimpleDateFormat
@@ -42,6 +43,15 @@ class MainActivity : AppCompatActivity() {
     private var streamPort = CameraStreamService.DEFAULT_PORT
     private val clockHandler = Handler(Looper.getMainLooper())
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+    /** WebSocket listener for person detection — brightens screen when someone is at the door */
+    private val personDetectionListener: (JsonObject) -> Unit = { msg ->
+        val type = msg.get("type")?.asString
+        when (type) {
+            "person_detected" -> runOnUiThread { setScreenBrightness(1.0f) }
+            "person_left"     -> runOnUiThread { setScreenBrightness(0.01f) }
+        }
+    }
 
     /** Indicator states */
     private enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED }
@@ -75,8 +85,13 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Always keep screen on
+        // Always keep screen on, but at minimum brightness to save power.
+        // The screen must stay on for CameraX lifecycle, but we don't need
+        // the display to be visible — it's a doorbell, not a tablet.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.attributes = window.attributes.apply {
+            screenBrightness = 0.01f   // lowest non-zero brightness
+        }
 
         // Full immersive — hide status bar and navigation bar
         goImmersive()
@@ -97,6 +112,7 @@ class MainActivity : AppCompatActivity() {
         clockHandler.post(clockRunnable)
 
         setIndicator(ConnectionState.DISCONNECTED)
+        ServerRegistration.addListener(personDetectionListener)
         requestBatteryOptimizationExemption()
         enterKioskMode()
         requestCameraPermission()
@@ -115,6 +131,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         clockHandler.removeCallbacks(clockRunnable)
+        ServerRegistration.removeListener(personDetectionListener)
     }
 
     /** Full-screen immersive sticky mode — hides status bar + nav bar */
@@ -267,6 +284,12 @@ class MainActivity : AppCompatActivity() {
                 data = Uri.parse("package:$packageName")
             }
             startActivity(intent)
+        }
+    }
+
+    private fun setScreenBrightness(brightness: Float) {
+        window.attributes = window.attributes.apply {
+            screenBrightness = brightness
         }
     }
 

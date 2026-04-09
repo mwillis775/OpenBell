@@ -2,14 +2,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
+    body::Body,
     extract::{
         ws::{Message, WebSocket},
         ConnectInfo, State, WebSocketUpgrade,
     },
-    response::IntoResponse,
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
@@ -35,6 +38,8 @@ pub fn build_router(state: Arc<AppState>, audio_mgr: Arc<AudioManager>) -> Route
         .route("/api/cv/event", post(cv_event))
         .route("/api/cv/status", get(cv_status))
         .route("/api/cv/toggle", post(cv_toggle))
+        .route("/api/stream", get(api_stream))
+        .route("/api/snapshot", get(api_snapshot))
         .with_state(shared)
         .layer(CorsLayer::permissive())
 }
@@ -92,6 +97,60 @@ async fn cv_toggle(
     Json(serde_json::json!({ "status": "ok", "enabled": enabled }))
 }
 
+// ── Camera stream endpoints ──
+
+const MJPEG_BOUNDARY: &str = "openbell-frame";
+
+/// GET /api/stream — MJPEG multipart stream from the phone's camera
+async fn api_stream(State(ws): State<Arc<WsState>>) -> Response {
+    let mut rx = ws.app.frame_rx.clone();
+    let stream = async_stream::stream! {
+        loop {
+            // Wait for a new frame
+            if rx.changed().await.is_err() {
+                break;
+            }
+            let frame: Option<Bytes> = rx.borrow_and_update().clone();
+            if let Some(jpeg) = frame {
+                let header = format!(
+                    "--{MJPEG_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+                    jpeg.len()
+                );
+                yield Ok::<Bytes, std::convert::Infallible>(Bytes::from(header));
+                yield Ok(jpeg);
+                yield Ok(Bytes::from_static(b"\r\n"));
+            }
+        }
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/x-mixed-replace; boundary={MJPEG_BOUNDARY}"),
+        )
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+/// GET /api/snapshot — single JPEG frame
+async fn api_snapshot(State(ws): State<Arc<WsState>>) -> Response {
+    let frame = ws.app.frame_rx.borrow().clone();
+    match frame {
+        Some(jpeg) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/jpeg")
+            .header(header::CONTENT_LENGTH, jpeg.len().to_string())
+            .body(Body::from(jpeg))
+            .unwrap(),
+        None => Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .body(Body::from("No frame available"))
+            .unwrap(),
+    }
+}
+
 // ── WebSocket handler ──
 
 async fn ws_handler(
@@ -123,7 +182,7 @@ async fn handle_socket(socket: WebSocket, ws: Arc<WsState>, addr: SocketAddr) {
 
     // Auto-register fallback: if a non-localhost client connects and doesn't
     // send a Register message within 5 seconds, assume it's the doorbell phone
-    // and register it automatically (stream on port 8080).
+    // and register it automatically.
     if !addr.ip().is_loopback() {
         let auto_ws = ws.clone();
         let auto_ip = addr.ip().to_string();
@@ -141,7 +200,8 @@ async fn handle_socket(socket: WebSocket, ws: Arc<WsState>, addr: SocketAddr) {
                 );
                 return;
             }
-            let stream = format!("http://{}:8080/video", auto_ip);
+            // Stream is served locally via /api/stream (phone pushes frames over WS)
+            let stream = format!("http://localhost:{}/api/stream", crate::SERVER_PORT);
             info!("Auto-registering unregistered phone {} (fallback)", auto_ip);
             let dev = crate::state::DeviceInfo {
                 device_ip: auto_ip.clone(),
@@ -167,11 +227,20 @@ async fn handle_socket(socket: WebSocket, ws: Arc<WsState>, addr: SocketAddr) {
 
     // Spawn task for broadcast → client
     let mut send_task = tokio::spawn(async move {
-        while let Ok(msg) = broadcast_rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&msg) {
-                if sender.send(Message::Text(json.into())).await.is_err() {
-                    break;
+        loop {
+            match broadcast_rx.recv().await {
+                Ok(msg) => {
+                    if let Ok(json) = serde_json::to_string(&msg) {
+                        if sender.send(Message::Text(json.into())).await.is_err() {
+                            break;
+                        }
+                    }
                 }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!("Broadcast receiver lagged, skipped {} messages", n);
+                    // Continue — don't kill the connection over missed broadcasts
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     });
@@ -180,10 +249,44 @@ async fn handle_socket(socket: WebSocket, ws: Arc<WsState>, addr: SocketAddr) {
     let ws_clone = ws.clone();
     let client_addr = addr;
     let mut recv_task = tokio::spawn(async move {
+        let mut registered_via_frame = false;
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
                 Message::Text(text) => {
                     handle_client_message(&ws_clone, &text, client_addr).await;
+                }
+                Message::Binary(data) => {
+                    // Binary messages are JPEG camera frames from the phone
+                    if data.len() > 2 && data[0] == 0xFF && data[1] == 0xD8 {
+                        let _ = ws_clone.app.frame_tx.send(Some(Bytes::from(data.to_vec())));
+
+                        // Auto-register on first frame if no device registered yet
+                        if !registered_via_frame && ws_clone.app.stream_url.read().is_none() {
+                            registered_via_frame = true;
+                            let ip = client_addr.ip().to_string();
+                            let stream = format!("http://localhost:{}/api/stream", crate::SERVER_PORT);
+                            info!("Auto-registering camera from {} (first frame received)", ip);
+                            let dev = crate::state::DeviceInfo {
+                                device_ip: ip.clone(),
+                                stream_url: Some(stream.clone()),
+                                capabilities: vec!["camera".into(), "doorbell_button".into(), "audio_playback".into()],
+                                device_type: "doorbell".into(),
+                                device_name: "Front Door".into(),
+                                registered_at: AppState::now_secs(),
+                                last_seen: AppState::now_secs(),
+                            };
+                            ws_clone.app.devices.write().insert(ip.clone(), dev);
+                            *ws_clone.app.phone_ip.write() = Some(ip);
+                            *ws_clone.app.stream_url.write() = Some(stream);
+                            let _ = ws_clone.app.broadcast_tx.send(ServerMessage::Status {
+                                call_state: ws_clone.app.call_state.read().to_string(),
+                                devices: serde_json::to_value(&*ws_clone.app.devices.read()).unwrap_or_default(),
+                                stream_url: ws_clone.app.stream_url.read().clone(),
+                                phone_audio_muted: ws_clone.app.phone_audio_muted.load(Ordering::Relaxed),
+                                cv_enabled: ws_clone.app.cv_enabled.load(Ordering::Relaxed),
+                            });
+                        }
+                    }
                 }
                 Message::Close(_) => break,
                 _ => {}
@@ -214,16 +317,17 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
     match msg {
         ClientMessage::Register {
             device_ip,
-            stream_url,
+            stream_url: _,
             capabilities,
             device_type,
             device_name,
         } => {
             let ip = device_ip.unwrap_or_else(|| addr.ip().to_string());
-            let url = stream_url.clone();
+            // Stream is always served locally (phone pushes frames over WS)
+            let local_stream = format!("http://localhost:{}/api/stream", crate::SERVER_PORT);
             let dev = crate::state::DeviceInfo {
                 device_ip: ip.clone(),
-                stream_url: stream_url.clone(),
+                stream_url: Some(local_stream.clone()),
                 capabilities: capabilities.unwrap_or_default(),
                 device_type: device_type.unwrap_or_else(|| "doorbell".into()),
                 device_name: device_name.unwrap_or_else(|| "Front Door".into()),
@@ -232,9 +336,7 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
             };
             state.devices.write().insert(ip.clone(), dev);
             *state.phone_ip.write() = Some(ip.clone());
-            if let Some(u) = url {
-                *state.stream_url.write() = Some(u);
-            }
+            *state.stream_url.write() = Some(local_stream);
             info!("Device registered: {} from {}", ip, addr);
 
             // Notify dashboards of updated status
@@ -364,7 +466,7 @@ async fn handle_client_message(ws: &Arc<WsState>, text: &str, addr: SocketAddr) 
             snapshot_file,
             ..
         } => {
-            handle_cv_event(state, &event_type, timestamp, person_count, max_confidence, snapshot_file);
+            handle_cv_event(state, &event_type, timestamp, person_count, max_confidence, snapshot_file, None);
         }
     }
 }
@@ -381,6 +483,9 @@ async fn cv_event(
     let person_count = payload["person_count"].as_u64().unwrap_or(0) as u32;
     let max_confidence = payload["max_confidence"].as_f64().unwrap_or(0.0);
     let snapshot_file = payload["snapshot_file"].as_str().map(String::from);
+    let identities: Option<Vec<String>> = payload["identities"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
 
     handle_cv_event(
         &ws.app,
@@ -389,6 +494,7 @@ async fn cv_event(
         person_count,
         max_confidence,
         snapshot_file,
+        identities,
     );
 
     Json(serde_json::json!({ "status": "ok" }))
@@ -402,18 +508,20 @@ fn handle_cv_event(
     person_count: u32,
     max_confidence: f64,
     snapshot_file: Option<String>,
+    identities: Option<Vec<String>>,
 ) {
     match event_type {
         "person_detected" => {
             info!(
-                "CV: Person detected — {} person(s), conf={:.2}, snapshot={:?}",
-                person_count, max_confidence, snapshot_file
+                "CV: Person detected — {} person(s), conf={:.2}, snapshot={:?}, identities={:?}",
+                person_count, max_confidence, snapshot_file, identities
             );
             let _ = state.broadcast_tx.send(ServerMessage::PersonDetected {
                 timestamp,
                 person_count,
                 max_confidence,
                 snapshot_file,
+                identities,
             });
         }
         "person_left" => {

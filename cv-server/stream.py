@@ -5,6 +5,7 @@ Connects to the phone's MJPEG camera stream and yields frames.
 """
 
 import logging
+import threading
 import time
 from typing import Generator, Optional
 
@@ -15,6 +16,25 @@ import requests
 from config import RUST_SERVER_URL, STREAM_POLL_INTERVAL, STREAM_READ_TIMEOUT
 
 log = logging.getLogger("openbell.cv.stream")
+
+# Maximum consecutive read failures before declaring the stream dead
+MAX_CONSECUTIVE_FAILURES = 30
+
+
+class FrameBuffer:
+    """Thread-safe container for the latest camera frame."""
+
+    def __init__(self):
+        self._frame: Optional[np.ndarray] = None
+        self._lock = threading.Lock()
+
+    def update(self, frame: np.ndarray):
+        with self._lock:
+            self._frame = frame
+
+    def get(self) -> Optional[np.ndarray]:
+        with self._lock:
+            return self._frame
 
 
 def get_stream_url() -> Optional[str]:
@@ -51,6 +71,7 @@ class MJPEGGrabber:
     def __init__(self, url: str):
         self.url = url
         self._cap: Optional[cv2.VideoCapture] = None
+        self._consecutive_failures = 0
 
     def open(self) -> bool:
         """Open the MJPEG stream. Returns True on success."""
@@ -80,11 +101,18 @@ class MJPEGGrabber:
             return None
         ret, frame = self._cap.read()
         if not ret or frame is None:
+            self._consecutive_failures += 1
             return None
+        self._consecutive_failures = 0
         # Phone streams raw sensor orientation (landscape).
         # Rotate 90° CCW to get portrait.
         frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
         return frame
+
+    @property
+    def is_dead(self) -> bool:
+        """True if the stream has had too many consecutive read failures."""
+        return self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES
 
     def release(self):
         """Release the capture."""
@@ -93,11 +121,19 @@ class MJPEGGrabber:
             self._cap = None
 
     def frames(self) -> Generator[np.ndarray, None, None]:
-        """Yield frames until the stream dies."""
+        """Yield frames, tolerating transient failures."""
         while True:
             frame = self.read()
             if frame is None:
-                break
+                if self.is_dead:
+                    log.warning(
+                        "Stream dead after %d consecutive failures",
+                        MAX_CONSECUTIVE_FAILURES,
+                    )
+                    break
+                # Brief pause before retrying a transient failure
+                time.sleep(0.05)
+                continue
             yield frame
 
     def __enter__(self):

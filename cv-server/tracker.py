@@ -32,6 +32,7 @@ class PresenceEvent:
     max_confidence: float = 0.0
     snapshot_file: Optional[str] = None
     detections: List[dict] = field(default_factory=list)
+    identities: List[str] = field(default_factory=list)
 
 
 class PresenceTracker:

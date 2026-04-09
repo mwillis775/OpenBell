@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/tauri-v2/src-tauri/gen/schemas/desktop-schema.json",
+  "productName": "OpenBell",
+  "version": "1.0.0",
+  "identifier": "com.openbell.dashboard",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OpenBell",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 480,
+        "minHeight": 360,
+        "decorations": true,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.*.* http://10.*.*.* data: blob:; media-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.*.* http://10.*.*.*; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:* http://192.168.*.* http://10.*.*.* ws://192.168.*.* ws://10.*.*.*; font-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ]
+  }
+}

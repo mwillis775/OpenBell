@@ -35,6 +35,7 @@ pkill -f doorbell-server 2>/dev/null || true
 pkill -f "python.*cv-server" 2>/dev/null || true
 pkill -f "python.*voice-assistant" 2>/dev/null || true
 fuser -k -n tcp 5000 2>/dev/null || true
+fuser -k -n tcp 5100 2>/dev/null || true
 fuser -k -n udp 5002 2>/dev/null || true
 fuser -k -n udp 5003 2>/dev/null || true
 sleep 0.5

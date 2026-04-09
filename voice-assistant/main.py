@@ -9,11 +9,12 @@ within the auto-answer timeout).
 On activation:
   1.  Plays a British-accented greeting over the phone speaker.
   2.  Listens to the visitor via Whisper STT.
-  3.  Classifies the visitor's intent (delivery / business / personal /
-      police / unknown).
-  4.  Plays the appropriate response, then ends the session.
+  3.  If an LLM model is configured, engages in natural conversation.
+      Otherwise falls back to keyword-based intent classification.
+  4.  Always refuses to help police (keyword safety net + LLM system prompt).
+  5.  Plays a farewell, then ends the session.
 
-All inference (Whisper + Piper TTS) runs locally.
+All inference (Whisper, Piper TTS, optional LLM) runs locally.
 """
 
 import asyncio
@@ -25,6 +26,7 @@ import time
 
 import numpy as np
 
+import chat
 import config
 import intent as intent_clf
 import responses
@@ -66,11 +68,12 @@ def run_conversation():
     Blocking conversation loop.  Called when assistant is activated.
 
     Flow:
-      greeting → listen → classify → respond
-      (optionally one follow-up turn)
+      greeting → listen → [police check] → respond (LLM or keyword) → ...
+      Repeats up to MAX_TURNS, then farewell.
     """
     log.info("=== Conversation started ===")
     session_start = time.time()
+    conversation_history = []  # [(role, text), ...]
 
     receiver.clear()
     receiver.start()
@@ -80,6 +83,7 @@ def run_conversation():
         greeting_audio = tts.speak(responses.GREETING, cache_key="greeting")
         sender.send_audio(greeting_audio, realtime=True)
         log.info("Greeting sent (%.1fs)", len(greeting_audio) / config.SAMPLE_RATE)
+        conversation_history.append(("assistant", responses.GREETING))
 
         # 2. Listen + respond loop (max MAX_TURNS)
         for turn in range(config.MAX_TURNS):
@@ -100,11 +104,35 @@ def run_conversation():
                     sender.send_audio(audio, realtime=True)
                 break
 
-            # 3. Classify intent
+            # 3. Check for police keywords FIRST (safety net — always runs)
             detected_intent = intent_clf.classify(transcript)
             log.info("Turn %d — intent=%s transcript=%r", turn + 1, detected_intent, transcript)
 
-            # 4. Respond
+            if detected_intent == responses.POLICE:
+                # Stone wall — canned response, no LLM, end conversation
+                audio = tts.speak(responses.RESPONSES[responses.POLICE],
+                                  cache_key=responses.POLICE)
+                sender.send_audio(audio, realtime=True)
+                log.info("Police detected — stone-walled, ending conversation")
+                break
+
+            # 4. Generate response — LLM chat or keyword fallback
+            if chat.is_available():
+                conversation_history.append(("visitor", transcript))
+                response_text = chat.generate_response(
+                    conversation_history[:-1],
+                    transcript,
+                )
+                if response_text:
+                    conversation_history.append(("assistant", response_text))
+                    audio = tts.speak(response_text)
+                    sender.send_audio(audio, realtime=True)
+                    log.info("Chat response (%.1fs): %r",
+                             len(audio) / config.SAMPLE_RATE, response_text)
+                    continue  # keep the conversation going
+                # LLM returned empty — fall through to keyword response
+
+            # Keyword-based fallback
             if detected_intent in responses.RESPONSES:
                 resp_text = responses.RESPONSES[detected_intent]
                 audio = tts.speak(resp_text, cache_key=detected_intent)
@@ -116,9 +144,9 @@ def run_conversation():
             log.info("Response sent: %s (%.1fs)",
                      detected_intent, len(audio) / config.SAMPLE_RATE)
 
-            # For delivery/business/personal/police — one response is enough
+            # For clear intents — one response is enough
             if detected_intent in (responses.DELIVERY, responses.BUSINESS,
-                                   responses.PERSONAL, responses.POLICE):
+                                   responses.PERSONAL):
                 break
 
         # 5. Farewell
@@ -235,6 +263,14 @@ def main():
     log.info("Loading models (first run may download)...")
     tts.init()
     stt.load_model()
+
+    # Try to load LLM for chat mode (optional)
+    if config.LLM_MODEL_PATH:
+        chat.init()
+    if chat.is_available():
+        log.info("  Chat mode:     ENABLED (LLM loaded)")
+    else:
+        log.info("  Chat mode:     disabled (keyword responses only)")
 
     # Pre-cache all standard TTS responses
     cache_texts = {

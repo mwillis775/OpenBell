@@ -1,23 +1,26 @@
 package com.doorbell.app.stream
 
 import android.util.Log
+import com.doorbell.app.service.MediaStorageManager
+import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayInputStream
+import java.io.FileInputStream
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /**
- * Embedded HTTP server that serves the phone camera as an MJPEG stream.
- *
- * Uses a lock + condition variable so client threads block until a new frame
- * arrives instead of relying on PipedInputStream (which breaks when the
- * reader falls behind the writer).
+ * Embedded HTTP server that serves the phone camera as an MJPEG stream
+ * and provides access to stored media files (snapshots + video recordings).
  *
  * Endpoints:
- *  GET /video    — multipart MJPEG stream (for the PC server's vision engine)
- *  GET /snapshot — single JPEG frame
+ *  GET /video       — multipart MJPEG stream (for the PC server's vision engine)
+ *  GET /snapshot    — single JPEG frame
+ *  GET /media/list  — JSON list of stored media files
+ *  GET /media/file/<name>  — download a media file
+ *  POST /media/delete/<name> — delete a media file
  */
 class MjpegStreamServer(port: Int = 8080) : NanoHTTPD(port) {
 
@@ -28,6 +31,7 @@ class MjpegStreamServer(port: Int = 8080) : NanoHTTPD(port) {
 
     private val frameLock = ReentrantLock()
     private val frameAvailable = frameLock.newCondition()
+    private val gson = Gson()
 
     @Volatile
     private var latestFrame: ByteArray? = null
@@ -51,14 +55,77 @@ class MjpegStreamServer(port: Int = 8080) : NanoHTTPD(port) {
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri.lowercase()
+        val method = session.method
+
         return when {
+            // ── Media endpoints ──
+            uri == "/media/list" -> serveMediaList()
+            uri.startsWith("/media/file/") -> serveMediaFile(session.uri)
+            uri.startsWith("/media/delete/") && method == Method.POST -> deleteMediaFile(session.uri)
+
+            // ── Camera stream endpoints ──
             uri == "/snapshot" || uri == "/shot.jpg" -> serveSnapshot()
             uri == "/video" || uri == "/" -> serveMjpegStream()
+
             else -> newFixedLengthResponse(
-                Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not found. Use /video or /snapshot"
+                Response.Status.NOT_FOUND, MIME_PLAINTEXT,
+                "Not found. Use /video, /snapshot, or /media/list"
             )
         }
     }
+
+    // ── Media serving ──
+
+    private fun serveMediaList(): Response {
+        val items = MediaStorageManager.listMedia()
+        val json = gson.toJson(mapOf("media" to items))
+        return newFixedLengthResponse(
+            Response.Status.OK, "application/json", json
+        )
+    }
+
+    private fun serveMediaFile(uri: String): Response {
+        // Extract filename from /media/file/<name>
+        val filename = uri.removePrefix("/media/file/").removePrefix("/")
+        if (filename.isEmpty()) {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing filename"
+            )
+        }
+
+        val file = MediaStorageManager.getFile(filename)
+            ?: return newFixedLengthResponse(
+                Response.Status.NOT_FOUND, MIME_PLAINTEXT, "File not found"
+            )
+
+        val contentType = when {
+            filename.endsWith(".jpg") || filename.endsWith(".jpeg") -> "image/jpeg"
+            filename.endsWith(".mp4") -> "video/mp4"
+            else -> "application/octet-stream"
+        }
+
+        return newFixedLengthResponse(
+            Response.Status.OK, contentType,
+            FileInputStream(file), file.length()
+        )
+    }
+
+    private fun deleteMediaFile(uri: String): Response {
+        val filename = uri.removePrefix("/media/delete/").removePrefix("/")
+        if (filename.isEmpty()) {
+            return newFixedLengthResponse(
+                Response.Status.BAD_REQUEST, MIME_PLAINTEXT, "Missing filename"
+            )
+        }
+
+        val deleted = MediaStorageManager.deleteFile(filename)
+        val json = gson.toJson(mapOf("deleted" to deleted))
+        return newFixedLengthResponse(
+            Response.Status.OK, "application/json", json
+        )
+    }
+
+    // ── Camera stream ──
 
     private fun serveSnapshot(): Response {
         val frame = latestFrame

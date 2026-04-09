@@ -15,6 +15,9 @@ electron-app/node_modules/
 electron-app/dist/
 electron-app/out/
 
+# Tauri
+tauri-app/src-tauri/target/
+
 # Python
 __pycache__/
 *.pyc

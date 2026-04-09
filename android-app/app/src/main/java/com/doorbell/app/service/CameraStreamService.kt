@@ -16,28 +16,38 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import com.doorbell.app.R
+import com.doorbell.app.network.ServerRegistration
 import com.doorbell.app.stream.MjpegStreamServer
 import com.doorbell.app.ui.MainActivity
+import com.google.gson.JsonObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.Executors
 
 /**
  * Foreground service that captures camera frames and serves them as MJPEG via
- * an embedded HTTP server. This runs continuously so the PC server can always
- * pull the camera feed for AI vision.
+ * an embedded HTTP server. Also records video clips when person presence is
+ * detected, and stores snapshots/videos on the phone's internal storage.
  *
  * Optimised for low-latency, low-bandwidth LAN streaming:
- *  - YUV_420_888 → NV21 → YuvImage.compressToJpeg  (hardware path, ~3× faster
- *    than the old RGBA → Bitmap → rotate → JPEG path)
- *  - JPEG quality 40 — plenty for a doorbell over LAN (~15-25 KB/frame)
- *  - Capped at 12 fps to save CPU / battery / bandwidth
- *  - 480×360 resolution — enough for person-detection, saves encoding time
+ *  - YUV_420_888 → NV21 → YuvImage.compressToJpeg  (hardware path)
+ *  - JPEG quality 40 for stream — plenty for a doorbell over LAN
+ *  - Capped at 5 fps to save CPU / battery / bandwidth
+ *  - 480×360 resolution for stream — enough for person-detection
+ *  - HD video recording via CameraX VideoCapture when people are detected
  */
 class CameraStreamService : Service(), LifecycleOwner {
 
@@ -49,11 +59,14 @@ class CameraStreamService : Service(), LifecycleOwner {
         const val DEFAULT_PORT = 8080
 
         /** Target FPS cap (camera may deliver faster; we skip surplus frames) */
-        private const val TARGET_FPS = 30
+        private const val TARGET_FPS = 5
         private const val MIN_FRAME_INTERVAL_NS = 1_000_000_000L / TARGET_FPS
 
-        /** JPEG quality — 55 gives clean picture at reasonable bandwidth on LAN */
-        private const val JPEG_QUALITY = 55
+        /** JPEG quality — 40 is plenty for person detection over LAN */
+        private const val JPEG_QUALITY = 40
+
+        /** JPEG quality for saved snapshots — high quality for review */
+        private const val SNAPSHOT_QUALITY = 95
     }
 
     private lateinit var lifecycleRegistry: LifecycleRegistry
@@ -68,6 +81,19 @@ class CameraStreamService : Service(), LifecycleOwner {
     /** Reusable output buffer — avoids allocating a new ByteArrayOutputStream every frame */
     private val jpegBuffer = ByteArrayOutputStream(32_768)
 
+    // ── Video recording ──
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var activeRecording: Recording? = null
+    @Volatile private var isRecording = false
+    private var videoSupported = false
+    private var currentVideoFile: File? = null
+
+    /** Set to a File to capture the next frame as a high-quality snapshot */
+    @Volatile private var pendingSnapshotFile: File? = null
+
+    /** Listener for server messages (person detected/left) */
+    private val serverListener: (JsonObject) -> Unit = { msg -> onServerMessage(msg) }
+
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
 
@@ -75,6 +101,7 @@ class CameraStreamService : Service(), LifecycleOwner {
         super.onCreate()
         lifecycleRegistry = LifecycleRegistry(this)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
+        MediaStorageManager.init(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -91,6 +118,7 @@ class CameraStreamService : Service(), LifecycleOwner {
             started = true
             startMjpegServer()
             startCamera()
+            ServerRegistration.addListener(serverListener)
         }
 
         return START_STICKY
@@ -99,6 +127,8 @@ class CameraStreamService : Service(), LifecycleOwner {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        ServerRegistration.removeListener(serverListener)
+        stopVideoRecording()
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         mjpegServer?.stop()
         mjpegServer = null
@@ -106,6 +136,80 @@ class CameraStreamService : Service(), LifecycleOwner {
         Log.i(TAG, "Camera stream service destroyed")
         super.onDestroy()
     }
+
+    // ── Person detection events → recording ──
+
+    private fun onServerMessage(msg: JsonObject) {
+        val type = msg.get("type")?.asString ?: return
+        when (type) {
+            "person_detected" -> {
+                Log.i(TAG, "Person detected — starting video capture")
+                startVideoCapture()
+            }
+            "person_left" -> {
+                Log.i(TAG, "Person left — stopping video capture")
+                stopVideoRecording()
+            }
+        }
+    }
+
+    /**
+     * Start recording a video clip and save a snapshot as thumbnail.
+     */
+    private fun startVideoCapture() {
+        if (isRecording) return
+
+        if (videoSupported && videoCapture != null) {
+            // Save snapshot (serves as thumbnail for the video)
+            val videoFile = MediaStorageManager.generateVideoFile()
+            currentVideoFile = videoFile
+            val thumbFile = MediaStorageManager.thumbnailForVideo(videoFile)
+            pendingSnapshotFile = thumbFile
+
+            val outputOptions = FileOutputOptions.Builder(videoFile).build()
+            try {
+                activeRecording = videoCapture!!.output
+                    .prepareRecording(this, outputOptions)
+                    .start(ContextCompat.getMainExecutor(this)) { event ->
+                        when (event) {
+                            is VideoRecordEvent.Finalize -> {
+                                if (event.hasError()) {
+                                    Log.e(TAG, "Video recording error: ${event.error}")
+                                    videoFile.delete()
+                                    thumbFile.delete()
+                                } else {
+                                    Log.i(TAG, "Video saved: ${videoFile.name} (${videoFile.length() / 1024}KB)")
+                                }
+                                isRecording = false
+                                currentVideoFile = null
+                            }
+                        }
+                    }
+                isRecording = true
+                Log.i(TAG, "Recording started: ${videoFile.name}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start recording: ${e.message}")
+                // Fall back to snapshot only
+                pendingSnapshotFile = MediaStorageManager.generateSnapshotFile()
+            }
+        } else {
+            // VideoCapture not available — save snapshot only
+            Log.i(TAG, "Video recording not available, saving snapshot")
+            pendingSnapshotFile = MediaStorageManager.generateSnapshotFile()
+        }
+    }
+
+    private fun stopVideoRecording() {
+        if (!isRecording) return
+        try {
+            activeRecording?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping recording: ${e.message}")
+        }
+        activeRecording = null
+    }
+
+    // ── MJPEG server ──
 
     private fun startMjpegServer() {
         try {
@@ -115,6 +219,10 @@ class CameraStreamService : Service(), LifecycleOwner {
             Log.e(TAG, "Failed to start MJPEG server: ${e.message}")
         }
     }
+
+    fun getMjpegServer(): MjpegStreamServer? = mjpegServer
+
+    // ── Camera ──
 
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
@@ -138,9 +246,30 @@ class CameraStreamService : Service(), LifecycleOwner {
                     .build()
 
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis)
 
-                Log.i(TAG, "Front camera bound — streaming at 640×480, ${TARGET_FPS}fps cap, JPEG q$JPEG_QUALITY")
+                // Try binding VideoCapture alongside ImageAnalysis for HD recording
+                try {
+                    val recorder = Recorder.Builder()
+                        .setQualitySelector(
+                            QualitySelector.from(
+                                Quality.HD,
+                                androidx.camera.video.FallbackStrategy.higherQualityOrLowerThan(Quality.HD)
+                            )
+                        )
+                        .build()
+                    val videoCaptureUseCase = VideoCapture.withOutput(recorder)
+                    cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis, videoCaptureUseCase)
+                    videoCapture = videoCaptureUseCase
+                    videoSupported = true
+                    Log.i(TAG, "Camera bound — ImageAnalysis (640×480) + VideoCapture (HD), ${TARGET_FPS}fps stream")
+                } catch (e: Exception) {
+                    // Fallback: ImageAnalysis only (snapshots will still work)
+                    Log.w(TAG, "VideoCapture not supported, falling back to ImageAnalysis only: ${e.message}")
+                    cameraProvider.unbindAll()
+                    cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis)
+                    videoSupported = false
+                    Log.i(TAG, "Camera bound — ImageAnalysis only (640×480), ${TARGET_FPS}fps stream")
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Camera bind failed: ${e.message}")
             }
@@ -158,9 +287,34 @@ class CameraStreamService : Service(), LifecycleOwner {
             }
             lastFrameNs = now
 
-            val jpeg = yuvToJpeg(imageProxy)
-            if (jpeg != null) {
+            val width = imageProxy.width
+            val height = imageProxy.height
+            val nv21 = yuvToNv21(imageProxy) ?: return
+            val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
+            val rect = Rect(0, 0, width, height)
+
+            // Encode low-quality JPEG for streaming
+            jpegBuffer.reset()
+            if (yuvImage.compressToJpeg(rect, JPEG_QUALITY, jpegBuffer)) {
+                val jpeg = jpegBuffer.toByteArray()
                 mjpegServer?.onFrame(jpeg)
+                ServerRegistration.sendFrame(jpeg)
+            }
+
+            // Save high-quality snapshot if requested
+            val snapshotFile = pendingSnapshotFile
+            if (snapshotFile != null) {
+                pendingSnapshotFile = null
+                try {
+                    val hqOut = ByteArrayOutputStream(131_072)
+                    if (yuvImage.compressToJpeg(rect, SNAPSHOT_QUALITY, hqOut)) {
+                        snapshotFile.parentFile?.mkdirs()
+                        snapshotFile.writeBytes(hqOut.toByteArray())
+                        Log.i(TAG, "Snapshot saved: ${snapshotFile.name} (${hqOut.size() / 1024}KB)")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Snapshot save failed: ${e.message}")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Frame processing error: ${e.message}")
@@ -170,15 +324,14 @@ class CameraStreamService : Service(), LifecycleOwner {
     }
 
     /**
-     * Convert a YUV_420_888 [ImageProxy] to JPEG bytes using Android's
-     * built-in [YuvImage] compressor (backed by libjpeg-turbo).
+     * Convert a YUV_420_888 [ImageProxy] to a tightly-packed NV21 byte array.
      *
      * Key correctness detail: the Y and UV plane buffers may have a
      * rowStride larger than the image width (padding bytes at end of each
      * row). We must strip that padding when building the tightly-packed
      * NV21 array, otherwise every row shifts and produces coloured bars.
      */
-    private fun yuvToJpeg(image: ImageProxy): ByteArray? {
+    private fun yuvToNv21(image: ImageProxy): ByteArray? {
         val width  = image.width
         val height = image.height
 
@@ -186,9 +339,9 @@ class CameraStreamService : Service(), LifecycleOwner {
         val uPlane = image.planes[1]
         val vPlane = image.planes[2]
 
-        val yBuffer = yPlane.buffer
-        val uBuffer = uPlane.buffer
-        val vBuffer = vPlane.buffer
+        val yBuffer = yPlane.buffer.duplicate()
+        val uBuffer = uPlane.buffer.duplicate()
+        val vBuffer = vPlane.buffer.duplicate()
 
         val yRowStride   = yPlane.rowStride
         val uvRowStride  = uPlane.rowStride
@@ -224,7 +377,6 @@ class CameraStreamService : Service(), LifecycleOwner {
             }
         } else {
             // General path: handles any rowStride / pixelStride combo.
-            // Uses absolute get(index) so buffer position is never touched.
             for (row in 0 until uvHeight) {
                 for (col in 0 until uvWidth) {
                     val idx = row * uvRowStride + col * uvPixelStride
@@ -234,16 +386,7 @@ class CameraStreamService : Service(), LifecycleOwner {
             }
         }
 
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-
-        // No pixel manipulation here — rotation and flip are applied by
-        // consumers (CSS transform in Electron, cv2.rotate in CV server)
-        // to keep the phone's encode path as fast as possible.
-        jpegBuffer.reset()
-        if (!yuvImage.compressToJpeg(Rect(0, 0, width, height), JPEG_QUALITY, jpegBuffer)) {
-            return null
-        }
-        return jpegBuffer.toByteArray()
+        return nv21
     }
 
     // ── Notification boilerplate ─────────────────────────────────────────────

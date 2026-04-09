@@ -36,6 +36,9 @@ STREAM_READ_TIMEOUT = float(os.environ.get("OPENBELL_STREAM_TIMEOUT", "10.0"))
 # How often to poll for stream URL when no phone connected (seconds)
 STREAM_POLL_INTERVAL = float(os.environ.get("OPENBELL_STREAM_POLL", "5.0"))
 
+# ── Web re-stream ──
+WEB_STREAM_PORT = int(os.environ.get("OPENBELL_WEB_STREAM_PORT", "5100"))
+
 # ── Presence tracking ──
 # Seconds without a person detection to emit "person_left"
 PERSON_LEFT_TIMEOUT = float(os.environ.get("OPENBELL_PERSON_LEFT_TIMEOUT", "5.0"))
@@ -44,6 +47,19 @@ MIN_CONSECUTIVE_DETECTIONS = int(os.environ.get("OPENBELL_MIN_DETECTIONS", "4"))
 
 # ── CV enable/disable (polled from Rust server) ──
 CV_STATUS_POLL_INTERVAL = float(os.environ.get("OPENBELL_CV_POLL_INTERVAL", "2.0"))
+
+# ── Static object filter ──
+# Suppress detections stuck at the same position for N consecutive frames
+STATIC_IOU_THRESHOLD = float(os.environ.get("OPENBELL_STATIC_IOU", "0.75"))
+STATIC_FRAME_COUNT = int(os.environ.get("OPENBELL_STATIC_FRAMES", "15"))
+
+# ── Face recognition ──
+FACE_RECOGNITION_ENABLED = os.environ.get("OPENBELL_FACE_RECOGNITION", "1") == "1"
+FACE_TOLERANCE = float(os.environ.get("OPENBELL_FACE_TOLERANCE", "0.55"))
+FACE_REFERENCE_DIR = os.environ.get(
+    "OPENBELL_FACE_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "faces"),
+)
 
 # ── Snapshot saving ──
 SNAPSHOT_DIR = os.environ.get(

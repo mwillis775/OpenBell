@@ -23,9 +23,12 @@ import requests
 
 import config
 from detector import PersonDetector
+from recognizer import FaceRecognizer
 from snapshots import save_snapshot
-from stream import MJPEGGrabber, wait_for_stream
+from static_filter import StaticObjectFilter
+from stream import FrameBuffer, MJPEGGrabber, wait_for_stream
 from tracker import PresenceEvent, PresenceTracker
+from web_stream import start_web_stream
 
 # ── Logging ──
 logging.basicConfig(
@@ -79,6 +82,7 @@ def post_event(event: PresenceEvent):
         "max_confidence": event.max_confidence,
         "snapshot_file": event.snapshot_file,
         "detections": event.detections,
+        "identities": event.identities,
     }
     try:
         resp = requests.post(
@@ -108,23 +112,52 @@ def run_detection_loop():
     # Load model
     detector = PersonDetector()
     tracker = PresenceTracker()
+    static_filter = StaticObjectFilter(
+        iou_threshold=config.STATIC_IOU_THRESHOLD,
+        static_frames=config.STATIC_FRAME_COUNT,
+    )
+
+    # Load face recognizer (optional — needs face_recognition package)
+    recognizer = None
+    if config.FACE_RECOGNITION_ENABLED:
+        try:
+            recognizer = FaceRecognizer(
+                reference_dir=config.FACE_REFERENCE_DIR,
+                tolerance=config.FACE_TOLERANCE,
+            )
+            recognizer.load()
+            if not recognizer.is_loaded:
+                recognizer = None
+        except (ImportError, SystemExit):
+            log.warning("face_recognition not installed — person identification disabled")
+        except Exception as e:
+            log.warning("Face recognizer init failed: %s", e)
+
+    # Shared frame buffer for the web viewer
+    frame_buffer = FrameBuffer()
+    start_web_stream(frame_buffer)
 
     # Start background thread to poll CV enabled state
     poller = threading.Thread(target=_poll_cv_enabled, daemon=True)
     poller.start()
 
+    reconnect_delay = 3.0  # exponential backoff starting point
+
     while _running:
-        # Wait for a stream URL from the Rust server
+        # Re-fetch stream URL each time (phone IP may change)
         stream_url = wait_for_stream()
         if not _running:
             break
 
         grabber = MJPEGGrabber(stream_url)
         if not grabber.open():
-            log.warning("Could not open stream — retrying in 5s")
-            time.sleep(5)
+            log.warning("Could not open stream — retrying in %.0fs", reconnect_delay)
+            time.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 1.5, 30.0)
             continue
 
+        # Connected successfully — reset backoff
+        reconnect_delay = 3.0
         log.info("Detection loop running on %s", stream_url)
         last_inference = 0.0
         frame_count = 0
@@ -134,6 +167,9 @@ def run_detection_loop():
             for frame in grabber.frames():
                 if not _running:
                     break
+
+                # Publish every frame to the web viewer
+                frame_buffer.update(frame)
 
                 now = time.time()
                 # Throttle inference to configured interval
@@ -152,18 +188,30 @@ def run_detection_loop():
                 # Run YOLO
                 detections = detector.detect(frame)
 
+                # Filter out static objects (gnomes, hydrants, etc.)
+                detections = static_filter.filter(detections)
+
                 if detections:
                     detection_count += 1
 
                 # Update presence tracker
                 event: Optional[PresenceEvent] = tracker.update(detections, now)
 
-                # Save snapshot on new presence
-                if tracker.needs_snapshot and config.SAVE_SNAPSHOTS and detections:
-                    snapshot_file = save_snapshot(frame, detections)
+                # Snapshot saving is handled by the phone now — it records
+                # video + thumbnail when it receives PersonDetected events.
+                # We still identify faces for the event payload.
+                if tracker.needs_snapshot and detections:
                     tracker.mark_snapshot_saved()
-                    if event:
-                        event.snapshot_file = snapshot_file
+
+                    # Try to identify faces (only on new presence — expensive)
+                    if recognizer is not None and event:
+                        try:
+                            faces = recognizer.identify(frame)
+                            names = [n for n, d in faces if n != "unknown"]
+                            if names:
+                                event.identities = names
+                        except Exception as e:
+                            log.debug("Face recognition error: %s", e)
 
                 # Post event to Rust server if state changed
                 if event:
@@ -186,8 +234,9 @@ def run_detection_loop():
             grabber.release()
 
         if _running:
-            log.warning("Stream lost — reconnecting in 3s")
-            time.sleep(3)
+            log.warning("Stream lost — reconnecting in %.0fs", reconnect_delay)
+            time.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 1.5, 30.0)
 
     log.info("CV server stopped.")
 

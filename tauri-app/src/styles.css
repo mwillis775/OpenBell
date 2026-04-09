@@ -64,7 +64,6 @@ body::after {
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid var(--border-hi);
-  -webkit-app-region: drag;
 }
 
 .header h1 {
@@ -121,7 +120,7 @@ body::after {
   border-bottom: 1px solid var(--green-dim);
   animation: none;
 }
-.call-banner .actions { margin-top: 10px; -webkit-app-region: no-drag; }
+.call-banner .actions { margin-top: 10px; }
 
 @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.6; } }
 
@@ -130,7 +129,6 @@ body::after {
   display: flex;
   align-items: center;
   gap: 16px;
-  -webkit-app-region: no-drag;
 }
 
 /* ── Lock Button ── */
@@ -274,15 +272,9 @@ body::after {
   height: 100%;
   object-fit: contain;
   display: block;
-  /* Green-tinted night-vision look */
   filter: brightness(1.05);
   /* Correct for phone's landscape sensor: rotate 90° CCW to portrait */
   transform: rotate(-90deg);
-}
-/* Style the native CSS resize gripper */
-.video-container::-webkit-resizer {
-  background: linear-gradient(135deg, transparent 60%, var(--green-dim) 60%, var(--green-dim) 70%, transparent 70%, transparent 80%, var(--green-dim) 80%);
-  border: none;
 }
 .no-feed {
   display: flex;
@@ -307,7 +299,6 @@ body::after {
   color: var(--green);
   background: var(--surface);
   transition: all 0.15s;
-  -webkit-app-region: no-drag;
   letter-spacing: 1px;
   text-transform: uppercase;
 }
@@ -380,8 +371,6 @@ body::after {
 }
 .call-item .answered { color: var(--green); }
 .call-item .missed { color: var(--orange); }
-
-
 
 /* ── Intercom / Audio Bars ── */
 .intercom-bar {

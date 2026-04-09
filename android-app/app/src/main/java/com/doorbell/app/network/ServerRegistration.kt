@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import okhttp3.*
+import okio.ByteString.Companion.toByteString
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
@@ -28,6 +29,12 @@ object ServerRegistration {
     @Volatile private var connected = false
     private var serverUrl: String? = null
 
+    /** Guards against reconnect storms — only one reconnect in flight at a time */
+    @Volatile private var reconnectPending = false
+
+    /** The current WebSocket instance — used to ignore callbacks from stale sockets */
+    @Volatile private var currentWs: WebSocket? = null
+
     /** Stored registration info so we can re-register on every reconnect */
     @Volatile private var registeredIp: String? = null
     @Volatile private var registeredPort: Int = 8080
@@ -42,10 +49,15 @@ object ServerRegistration {
 
     @Synchronized
     fun connect(serverUrl: String) {
-        // Force-close any existing socket so reconnects always succeed
+        // Neutralize the old socket identity BEFORE cancelling — so its
+        // onFailure callback (fired asynchronously on OkHttp's thread)
+        // will see ws !== currentWs and bail out instead of scheduling
+        // another reconnect.
+        currentWs = null
         try { webSocket?.cancel() } catch (_: Exception) {}
         webSocket = null
         connected = false
+        reconnectPending = false  // Allow future scheduleReconnect() if this attempt fails
 
         this.serverUrl = serverUrl
         val wsUrl = serverUrl
@@ -54,10 +66,13 @@ object ServerRegistration {
         Log.i(TAG, "Connecting WebSocket: $wsUrl")
 
         val request = Request.Builder().url(wsUrl).build()
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        val newWs = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
+                // Ignore callbacks from stale sockets
+                if (ws !== currentWs) return
                 Log.i(TAG, "WebSocket connected")
                 connected = true
+                reconnectPending = false  // Cancel any pending reconnect timer
                 // Auto-register on every connect/reconnect
                 val ip = registeredIp
                 if (ip != null) {
@@ -73,6 +88,7 @@ object ServerRegistration {
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
+                if (ws !== currentWs) return
                 Log.d(TAG, "WS recv: $text")
                 try {
                     val msg = gson.fromJson(text, JsonObject::class.java)
@@ -83,32 +99,51 @@ object ServerRegistration {
             }
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                if (ws !== currentWs) return
                 Log.i(TAG, "WebSocket closing: $code $reason")
                 ws.close(1000, null)
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                // Ignore callbacks from stale sockets we already cancelled
+                if (ws !== currentWs) return
                 Log.i(TAG, "WebSocket closed: $code $reason")
                 connected = false
                 webSocket = null
+                currentWs = null
                 scheduleReconnect()
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                if (ws !== currentWs) return
                 Log.e(TAG, "WebSocket failure: ${t.message}")
                 connected = false
                 webSocket = null
+                currentWs = null
                 scheduleReconnect()
             }
         })
+        webSocket = newWs
+        currentWs = newWs
     }
 
     private fun scheduleReconnect() {
         val url = serverUrl ?: return
+        // Prevent multiple reconnect threads from piling up
+        if (reconnectPending) return
+        reconnectPending = true
         Thread {
             try {
-                Thread.sleep(2000)
+                Thread.sleep(3000)
             } catch (_: InterruptedException) {
+                reconnectPending = false
+                return@Thread
+            }
+            // If we're already connected (e.g. a new connect() succeeded
+            // while we were sleeping), don't clobber the working connection.
+            if (connected) {
+                Log.i(TAG, "Skipping reconnect — already connected")
+                reconnectPending = false
                 return@Thread
             }
             Log.i(TAG, "Attempting WebSocket reconnect...")
@@ -143,6 +178,11 @@ object ServerRegistration {
         val sent = webSocket?.send(json) ?: false
         if (!sent) Log.w(TAG, "WS send failed: $json")
         else Log.d(TAG, "WS sent: $json")
+    }
+
+    /** Send a camera JPEG frame as a binary WebSocket message */
+    fun sendFrame(jpeg: ByteArray) {
+        webSocket?.send(jpeg.toByteString())
     }
 
     /** Register this device with the server */

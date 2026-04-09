@@ -86,6 +86,7 @@ pub enum ServerMessage {
         person_count: u32,
         max_confidence: f64,
         snapshot_file: Option<String>,
+        identities: Option<Vec<String>>,
     },
     /// Person left (no longer in frame)
     PersonLeft { timestamp: f64 },

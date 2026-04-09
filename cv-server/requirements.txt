@@ -7,3 +7,7 @@ Pillow>=10.0.0
 # Install from the cu124 index — see start.sh for --index-url usage.
 torch>=2.6.0,<2.7.0
 torchvision>=0.21.0,<0.22.0
+# Face recognition (optional) — install manually:
+#   pip install dlib face_recognition
+# Requires cmake and C++ build tools. The system runs fine without it;
+# person identification is simply disabled.

@@ -4,9 +4,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bytes::Bytes;
 use parking_lot::RwLock;
 use serde::Serialize;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 use crate::protocol::{CallState, ServerMessage};
 
@@ -60,11 +61,15 @@ pub struct AppState {
     pub cv_enabled: Arc<AtomicBool>,
     /// Seconds to wait before auto-answering with the voice assistant
     pub auto_answer_secs: u64,
+    /// Latest camera frame (JPEG bytes) pushed by the phone over WebSocket
+    pub frame_tx: watch::Sender<Option<Bytes>>,
+    pub frame_rx: watch::Receiver<Option<Bytes>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
+        let (frame_tx, frame_rx) = watch::channel(None);
         Self {
             call_state: RwLock::new(CallState::Idle),
             current_call_id: RwLock::new(None),
@@ -85,6 +90,8 @@ impl AppState {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5),
+            frame_tx,
+            frame_rx,
         }
     }
 
